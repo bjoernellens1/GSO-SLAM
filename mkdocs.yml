@@ -1,0 +1,66 @@
+site_name: GSO-SLAM
+site_description: >
+  Bidirectionally Coupled Gaussian Splatting and Direct Visual Odometry —
+  documentation covering architecture, dependencies, extensions, and API reference.
+site_url: https://bjoernellens1.github.io/GSO-SLAM/
+repo_url: https://github.com/bjoernellens1/GSO-SLAM
+repo_name: bjoernellens1/GSO-SLAM
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: cyan
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: cyan
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - footnotes
+  - attr_list
+  - def_list
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - Dependencies: dependencies.md
+  - Extensions:
+    - Python Wrapping: python_wrapping.md
+    - ROCm Port: rocm_port.md
+    - Triton Kernels: triton_kernels.md
+    - ROS2 Integration: ros2_integration.md
+    - Semantic Mapping: semantic_mapping.md
+  - API Reference: api/index.md

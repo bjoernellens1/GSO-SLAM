@@ -23,6 +23,14 @@
 namespace graphics_utils
 {
 
+/**
+ * @brief Rounds an integer up or down to the nearest multiple of 16.
+ *
+ * Used to align tile dimensions in the CUDA rasterizer (tiles are 16×16).
+ *
+ * @param integer Input integer.
+ * @return Nearest multiple of 16 (rounds down for remainders < 8, up otherwise).
+ */
 inline int roundToIntegerMultipleOf16(int integer)
 {
     int remainder = integer % 16;
@@ -40,11 +48,25 @@ inline int roundToIntegerMultipleOf16(int integer)
     return integer;
 }
 
+/**
+ * @brief Converts a field-of-view angle to a focal length in pixels.
+ *
+ * @param fov   Field of view in radians.
+ * @param pixels  Image dimension in pixels along the same axis.
+ * @return Focal length in pixels.
+ */
 inline float fov2focal(float fov, int pixels)
 {
     return pixels / (2.0f * std::tan(fov / 2.0f));
 }
 
+/**
+ * @brief Converts a focal length in pixels to a field-of-view angle.
+ *
+ * @param focal   Focal length in pixels.
+ * @param pixels  Image dimension in pixels along the same axis.
+ * @return Field of view in radians.
+ */
 inline float focal2fov(float focal, int pixels)
 {
     return 2.0f * std::atan(pixels / (2.0f * focal));

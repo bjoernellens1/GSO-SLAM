@@ -33,14 +33,32 @@
 #include "graphics_utils.h"
 #include "tensor_utils.h"
 
+/**
+ * @brief A single training viewpoint in the Gaussian Splatting map.
+ *
+ * Stores the camera pose (SE3), intrinsics, RGB and depth image tensors,
+ * and the pre-computed projection matrices required by the CUDA rasterizer.
+ * Keyframes are created by @c GaussianMapper when DSO selects a new keyframe
+ * and are stored in @c GaussianScene.
+ */
 class GaussianKeyframe
 {
 public:
     GaussianKeyframe() {}
 
+    /**
+     * @brief Construct a GaussianKeyframe with a frame ID and creation iteration.
+     * @param fid           Unique frame identifier (matches DSO's frame ID).
+     * @param creation_iter Training iteration at which this keyframe was created.
+     */
     GaussianKeyframe(std::size_t fid, int creation_iter = 0)
         : fid_(fid), creation_iter_(creation_iter) {}
 
+    /**
+     * @brief Set the camera pose from a quaternion and translation.
+     * @param qw,qx,qy,qz  Rotation quaternion components (w first).
+     * @param tx,ty,tz      Translation vector components.
+     */
     void setPose(
         const double qw,
         const double qx,
@@ -50,26 +68,68 @@ public:
         const double ty,
         const double tz);
     
+    /**
+     * @brief Set the camera pose from an Eigen quaternion and translation vector.
+     * @param q  Unit quaternion representing rotation.
+     * @param t  Translation vector (camera origin in world frame).
+     */
     void setPose(
         const Eigen::Quaterniond& q,
         const Eigen::Vector3d& t);
 
+    /// @brief Returns the camera-to-world pose as a double-precision SE3.
     Sophus::SE3d getPose();
+    /// @brief Returns the camera-to-world pose as a single-precision SE3.
     Sophus::SE3f getPosef();
 
+    /**
+     * @brief Copy camera intrinsics from a @c Camera object into this keyframe.
+     * @param camera  The camera model (focal lengths, principal point, image size).
+     */
     void setCameraParams(const Camera& camera);
 
+    /**
+     * @brief Store the list of observed 2D keypoints in this frame.
+     * @param points2D  Vector of (u, v) 2D image coordinates.
+     */
     void setPoints2D(const std::vector<Eigen::Vector2d>& points2D);
+
+    /**
+     * @brief Associate a 3D map point ID with a specific 2D observation.
+     * @param point2D_idx  Index into the @c points2D_ vector.
+     * @param point3D_id   Global ID of the corresponding 3D point.
+     */
     void setPoint3DIdxForPoint2D(
         const point2D_idx_t point2D_idx,
         const point3D_id_t point3D_id);
 
+    /**
+     * @brief Pre-compute world-view, projection, and full-projection transform tensors.
+     *
+     * Must be called after @c setPose() and @c setCameraParams() before passing
+     * this keyframe to the rasterizer.
+     */
     void computeTransformTensors();
 
+    /**
+     * @brief Compute the 4×4 world-to-view matrix used by the OpenGL / CUDA pipeline.
+     * @param trans  Optional translation offset applied to the camera origin.
+     * @param scale  Uniform scale applied to the scene.
+     * @return 4×4 float matrix mapping world coordinates to camera space.
+     */
     Eigen::Matrix4f getWorld2View2(
         const Eigen::Vector3f& trans = {0.0f, 0.0f, 0.0f},
         float scale = 1.0f);
 
+    /**
+     * @brief Compute the perspective projection matrix for this keyframe.
+     * @param znear        Near clipping plane distance.
+     * @param zfar         Far clipping plane distance.
+     * @param fovX         Horizontal field of view in radians.
+     * @param fovY         Vertical field of view in radians.
+     * @param device_type  Torch device on which to allocate the result tensor.
+     * @return 4×4 float tensor containing the projection matrix.
+     */
     torch::Tensor getProjectionMatrix(
         float znear,
         float zfar,
@@ -77,6 +137,10 @@ public:
         float fovY,
         torch::DeviceType device_type = torch::kCUDA);
 
+    /**
+     * @brief Returns the current Gaussian pyramid training level for this keyframe.
+     * @return Integer level index (0 = full resolution, higher = coarser).
+     */
     int getCurrentGausPyramidLevel();
 
 public:

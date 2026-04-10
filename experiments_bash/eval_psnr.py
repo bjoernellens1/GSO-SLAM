@@ -1,3 +1,16 @@
+"""PSNR curve plotting utility for ablation studies.
+
+Reads per-iteration PSNR results from structured result directories and plots
+average PSNR vs. iteration curves for multiple experimental conditions and scenes.
+
+Expected directory structure::
+
+    experiments_bash/results/<case>/<scene>/<iteration>/psnr_gaussian_splatting.txt
+
+Usage::
+
+    python experiments_bash/eval_psnr.py
+"""
 import numpy as np
 import os
 import matplotlib.pyplot as plt
