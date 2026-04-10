@@ -202,18 +202,6 @@ def align(model, data):
             - ``trans_error`` is a ``(N,)`` array of per-point translation errors after alignment.
             - ``scale`` is the optimal uniform scale factor.
     """
-    """Align two trajectories using the method of Horn (closed-form).
-    
-    Input:
-    model -- first trajectory (3xn)
-    data -- second trajectory (3xn)
-    
-    Output:
-    rot -- rotation matrix (3x3)
-    trans -- translation vector (3x1)
-    trans_error -- translational error per point (1xn)
-    
-    """
     np.set_printoptions(precision=3,suppress=True)
     model_zerocentered = model - model.mean(1).reshape((3, -1))
     data_zerocentered = data - data.mean(1).reshape((3, -1))

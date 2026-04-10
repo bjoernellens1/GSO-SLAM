@@ -148,7 +148,7 @@ public:
 
     /// @overload Appends Gaussians with explicit scales and colours.
     void increasePcd(std::vector<float> points,     std::vector<float> colors, 
-                     std::vector<float> scales_vec, std::vector<float> colors_vec, const int iteration);
+                     std::vector<float> scales_vec, std::vector<float> rots_vec, const int iteration);
 
     /// @overload Appends Gaussians from pre-built torch tensors.
     void increasePcd(torch::Tensor& new_point_cloud, torch::Tensor& new_colors, const int iteration);
