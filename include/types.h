@@ -20,6 +20,11 @@
 
 #include <cstdint>
 
+/// @brief Index of a 2D keypoint within a keyframe's point list.
 typedef std::uint32_t point2D_idx_t;
+
+/// @brief Globally unique identifier for a 3D map point.
 typedef std::uint64_t point3D_id_t;
+
+/// @brief Identifier for a camera intrinsic model stored in GaussianScene.
 typedef std::uint32_t camera_id_t;

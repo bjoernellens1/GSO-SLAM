@@ -23,11 +23,32 @@
 namespace general_utils
 {
 
+/**
+ * @brief Computes the inverse sigmoid (logit) of a tensor element-wise.
+ *
+ * Defined as @f$ \text{logit}(x) = \log\left(\frac{x}{1-x}\right) @f$.
+ * Used to initialise the opacity parameter of Gaussians from an initial
+ * probability value before it is passed through the sigmoid activation.
+ *
+ * @param x Input tensor with values strictly in (0, 1).
+ * @return Tensor of the same shape containing logit values.
+ */
 inline torch::Tensor inverse_sigmoid(const torch::Tensor &x)
+
 {
     return torch::log(x / (1 - x));
 }
 
+/**
+ * @brief Builds a batch of 3×3 rotation matrices from unit quaternions.
+ *
+ * Normalises the input quaternions and applies the standard quaternion-to-matrix
+ * formula.  The convention is (w, x, y, z) ordering in the input tensor columns.
+ *
+ * @param r Input tensor of shape @c [N, 4] containing raw (possibly un-normalised)
+ *          quaternion values.  Modified in-place to contain the normalised quaternions.
+ * @return Tensor of shape @c [N, 3, 3] containing the corresponding rotation matrices.
+ */
 inline torch::Tensor build_rotation(torch::Tensor &r)
 {
     auto r0 = r.index({torch::indexing::Slice(), 0});

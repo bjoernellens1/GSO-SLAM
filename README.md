@@ -8,9 +8,11 @@
 
 <h3 align="center"> IEEE Robotics and Automation Letters, 2026 </h3>
 
-[Paper](https://arxiv.org/pdf/2602.11714) | [Video](https://www.youtube.com/watch?v=io5RmjNzkik&t)
+[Paper](https://arxiv.org/pdf/2602.11714) | [Video](https://www.youtube.com/watch?v=io5RmjNzkik&t) | [📚 Documentation](docs/index.md)
 
 </div>
+
+> **Documentation:** Full system documentation — including architecture, dependency map, Python wrapping, ROCm porting, Triton kernel analysis, ROS2 integration, and semantic mapping extension — is available in the [`docs/`](docs/) directory and can be built as a browseable site with [MkDocs](#documentation).
 
 ## Environments
 ```bash
@@ -59,4 +61,34 @@ If use_gaussian_viewer is set as 1, gaussian viewer will appear.
 cd experiments_bash
 bash replica_eval_rendering.sh
 bash replica_eval_depth.sh
+```
+
+## Documentation
+
+Full documentation is in the [`docs/`](docs/) directory.
+
+| Section | Description |
+|---|---|
+| [Architecture](docs/architecture.md) | System design, thread model, data flows |
+| [Dependencies](docs/dependencies.md) | All libraries with versions |
+| [Python Wrapping](docs/python_wrapping.md) | pybind11 bindings |
+| [ROCm Port](docs/rocm_port.md) | AMD GPU porting guide |
+| [Triton Kernels](docs/triton_kernels.md) | GPU kernel feasibility |
+| [ROS2 Integration](docs/ros2_integration.md) | ROS2 node implementation |
+| [Semantic Mapping](docs/semantic_mapping.md) | OpenCLIP / DINO extension |
+| [API Reference](docs/api/index.md) | C++ API (Doxygen) |
+
+### Build the MkDocs site
+
+```bash
+pip install mkdocs mkdocs-material
+mkdocs serve        # live preview at http://127.0.0.1:8000
+mkdocs build        # static HTML in site/
+```
+
+### Build the C++ API reference (Doxygen)
+
+```bash
+sudo apt-get install doxygen graphviz
+doxygen Doxyfile    # HTML at docs/api/html/index.html
 ```

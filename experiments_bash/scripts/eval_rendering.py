@@ -56,14 +56,43 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 def mse(img1, img2):
+    """Compute per-image mean squared error.
+
+    Args:
+        img1 (torch.Tensor): Predicted image tensor of shape ``[C, H, W]``.
+        img2 (torch.Tensor): Ground-truth image tensor of shape ``[C, H, W]``.
+
+    Returns:
+        torch.Tensor: Scalar tensor containing the mean squared error.
+    """
     return ((img1 - img2) ** 2).view(img1.shape[0], -1).mean(1, keepdim=True)
 
 
 def psnr(img1, img2):
+    """Compute Peak Signal-to-Noise Ratio (PSNR) between two images.
+
+    Uses the formula ``20 * log10(1 / sqrt(MSE))`` where pixel values are in [0, 1].
+
+    Args:
+        img1 (torch.Tensor): Predicted image tensor of shape ``[C, H, W]``.
+        img2 (torch.Tensor): Ground-truth image tensor of shape ``[C, H, W]``.
+
+    Returns:
+        torch.Tensor: Scalar tensor with the PSNR value in dB.
+    """
     mse = ((img1 - img2) ** 2).contiguous().view(img1.shape[0], -1).mean(1, keepdim=True)
     return 20 * torch.log10(1.0 / torch.sqrt(mse))
 
 def gaussian(window_size, sigma):
+    """Create a 1D normalised Gaussian kernel.
+
+    Args:
+        window_size (int): Number of elements in the kernel.
+        sigma (float): Standard deviation of the Gaussian.
+
+    Returns:
+        torch.Tensor: 1D Gaussian kernel of shape ``[window_size]``, summing to 1.
+    """
     gauss = torch.Tensor(
         [
             exp(-((x - window_size // 2) ** 2) / float(2 * sigma**2))
@@ -73,6 +102,15 @@ def gaussian(window_size, sigma):
     return gauss / gauss.sum()
 
 def create_window(window_size, channel):
+    """Build a 2D separable Gaussian kernel for SSIM computation.
+
+    Args:
+        window_size (int): Spatial size of the kernel.
+        channel (int): Number of image channels.
+
+    Returns:
+        torch.autograd.Variable: Kernel of shape ``[channel, 1, window_size, window_size]``.
+    """
     _1D_window = gaussian(window_size, 1.5).unsqueeze(1)
     _2D_window = _1D_window.mm(_1D_window.t()).float().unsqueeze(0).unsqueeze(0)
     window = Variable(
@@ -82,6 +120,17 @@ def create_window(window_size, channel):
 
 
 def ssim(img1, img2, window_size=11, size_average=True):
+    """Compute Structural Similarity Index (SSIM) between two images.
+
+    Args:
+        img1 (torch.Tensor): First image, shape ``[C, H, W]``, values in [0, 1].
+        img2 (torch.Tensor): Second image, shape ``[C, H, W]``.
+        window_size (int): Gaussian kernel window size (default 11).
+        size_average (bool): If ``True``, return the mean SSIM over all pixels.
+
+    Returns:
+        torch.Tensor: Scalar SSIM value in [0, 1] (higher is better).
+    """
     channel = img1.size(-3)
     window = create_window(window_size, channel)
 
@@ -93,6 +142,19 @@ def ssim(img1, img2, window_size=11, size_average=True):
 
 
 def _ssim(img1, img2, window, window_size, channel, size_average=True):
+    """Internal SSIM computation given a pre-built kernel.
+
+    Args:
+        img1 (torch.Tensor): First image ``[C, H, W]``.
+        img2 (torch.Tensor): Second image ``[C, H, W]``.
+        window: Pre-built Gaussian kernel from :func:`create_window`.
+        window_size (int): Spatial kernel size.
+        channel (int): Number of image channels.
+        size_average (bool): If ``True``, return the mean over all pixels.
+
+    Returns:
+        torch.Tensor: SSIM value or per-pixel SSIM map.
+    """
     mu1 = F.conv2d(img1, window, padding=window_size // 2, groups=channel)
     mu2 = F.conv2d(img2, window, padding=window_size // 2, groups=channel)
 
@@ -123,7 +185,23 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True):
     else:
         return ssim_map.mean(1).mean(1).mean(1)
 
-def align(model,data):
+def align(model, data):
+    """Align two trajectories using the closed-form method of Horn (1987).
+
+    Computes the optimal scale, rotation, and translation to align ``model`` to ``data``
+    in the least-squares sense.
+
+    Args:
+        model (np.ndarray): First trajectory as a ``(3, N)`` array of XYZ positions.
+        data (np.ndarray): Second (reference) trajectory as a ``(3, N)`` array.
+
+    Returns:
+        tuple: A 4-tuple ``(rot, trans, trans_error, scale)`` where:
+            - ``rot`` is a ``(3, 3)`` rotation matrix aligning model to data.
+            - ``trans`` is a ``(3, 1)`` translation vector.
+            - ``trans_error`` is a ``(N,)`` array of per-point translation errors after alignment.
+            - ``scale`` is the optimal uniform scale factor.
+    """
     """Align two trajectories using the method of Horn (closed-form).
     
     Input:
