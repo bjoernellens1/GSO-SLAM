@@ -12,10 +12,15 @@
 #ifndef CUDA_RASTERIZER_BACKWARD_H_INCLUDED
 #define CUDA_RASTERIZER_BACKWARD_H_INCLUDED
 
+#ifdef USE_ROCM
+#include <hip/hip_runtime.h>
+#define GLM_FORCE_HIP
+#else
 #include <cuda.h>
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #define GLM_FORCE_CUDA
+#endif
 #include <glm/glm.hpp>
 
 namespace BACKWARD

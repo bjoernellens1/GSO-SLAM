@@ -1,0 +1,40 @@
+# ============================================================
+# Docker build context exclusions for GSO-SLAM
+# ============================================================
+
+# Version control
+.git/
+.gitmodules
+
+# Datasets and large data files (not needed inside the image)
+dataset/
+
+# Build artefacts from the host
+build/
+*.o
+*.a
+
+# Documentation site
+site/
+docs/_build/
+
+# Python byte-compiled files
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Editor / IDE artefacts
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# CI workflow definitions (only source code needed in image)
+.github/
+
+# Log files
+*.log
+
+# Temporary files
+/tmp/

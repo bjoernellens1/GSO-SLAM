@@ -22,15 +22,20 @@
 #include <algorithm>
 #include <numeric>
 
+#ifdef USE_ROCM
+#include <hip/hip_runtime.h>
+#include <hipcub/hipcub.hpp>
+#include <hip/hip_cooperative_groups.h>
+#else
 #include <cuda_runtime_api.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <cub/cub.cuh>
 #include <cub/device/device_radix_sort.cuh>
-
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#endif
 namespace cg = cooperative_groups;
 
 #include "cuda_rasterizer/operate_points.h"

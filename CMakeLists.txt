@@ -1,14 +1,23 @@
 SET(PROJECT_NAME DSO)
 
 CMAKE_MINIMUM_REQUIRED(VERSION 3.22 FATAL_ERROR)
-PROJECT(${PROJECT_NAME} LANGUAGES CXX CUDA C)
+
+option(USE_ROCM "Build with AMD ROCm/HIP instead of NVIDIA CUDA" OFF)
+
+if(USE_ROCM)
+    PROJECT(${PROJECT_NAME} LANGUAGES CXX HIP C)
+else()
+    PROJECT(${PROJECT_NAME} LANGUAGES CXX CUDA C)
+endif()
 #set(CMAKE_VERBOSE_MAKEFILE ON)
 
 set(BUILD_TYPE Release)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_CUDA_STANDARD 17)
+if(NOT USE_ROCM)
+    set(CMAKE_CUDA_STANDARD 17)
+endif()
 #set(BUILD_TYPE RelWithDebInfo)
 set(CAFFE2_USE_CUDNN on)
 
@@ -25,7 +34,16 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS} -pthread")
 find_package(SuiteParse REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(Boost COMPONENTS system thread) 
-find_package(CUDA REQUIRED)
+if(USE_ROCM)
+    # Use config-mode find_package for ROCm 5.7+ (lowercase 'hip').
+    # The legacy uppercase FindHIP module is incompatible with PyTorch's
+    # LoadHIP.cmake which is loaded by find_package(Torch) on ROCm builds.
+    find_package(hip REQUIRED CONFIG)
+    find_package(hipcub REQUIRED CONFIG)
+    add_definitions(-DUSE_ROCM)
+else()
+    find_package(CUDA REQUIRED)
+endif()
 find_package(glm REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(jsoncpp REQUIRED)
@@ -137,8 +155,19 @@ add_library(simple_knn SHARED
     thirdparty/simple-knn/simple_knn.h
     thirdparty/simple-knn/spatial.cu
     thirdparty/simple-knn/spatial.h)
+if(USE_ROCM)
+    set_source_files_properties(
+        thirdparty/simple-knn/simple_knn.cu
+        thirdparty/simple-knn/spatial.cu
+        PROPERTIES LANGUAGE HIP
+    )
+endif()
 # target_compile_features(simple_knn PUBLIC cxx_std_17)
-target_link_libraries(simple_knn "${TORCH_LIBRARIES}")
+if(USE_ROCM)
+    target_link_libraries(simple_knn "${TORCH_LIBRARIES}" hip::hipcub)
+else()
+    target_link_libraries(simple_knn "${TORCH_LIBRARIES}")
+endif()
 
 # rasterizer
 add_library(cuda_rasterizer SHARED
@@ -159,15 +188,37 @@ add_library(cuda_rasterizer SHARED
     cuda_rasterizer/rasterizer_impl.cu
     cuda_rasterizer/rasterizer_impl.h
     cuda_rasterizer/stereo_vision.h)
-set_target_properties(cuda_rasterizer PROPERTIES CUDA_ARCHITECTURES "75;86")
-# target_compile_features(cuda_rasterizer PUBLIC cxx_std_17)
-target_include_directories(cuda_rasterizer PRIVATE
-    ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
-target_link_libraries(cuda_rasterizer
-    glm::glm
-    ${TORCH_LIBRARIES}
-    # Eigen3::Eigen
+if(USE_ROCM)
+    set_source_files_properties(
+        cuda_rasterizer/rasterizer_impl.cu
+        cuda_rasterizer/forward.cu
+        cuda_rasterizer/backward.cu
+        src/GS/operate_points.cu
+        src/GS/rasterize_points.cu
+        src/GS/stereo_vision.cu
+        PROPERTIES LANGUAGE HIP
     )
+    set_target_properties(cuda_rasterizer PROPERTIES
+        HIP_ARCHITECTURES "gfx906;gfx908;gfx1030;gfx1100")
+else()
+    set_target_properties(cuda_rasterizer PROPERTIES CUDA_ARCHITECTURES "75;86")
+endif()
+# target_compile_features(cuda_rasterizer PUBLIC cxx_std_17)
+if(USE_ROCM)
+    target_link_libraries(cuda_rasterizer
+        glm::glm
+        ${TORCH_LIBRARIES}
+        hip::hipcub
+    )
+else()
+    target_include_directories(cuda_rasterizer PRIVATE
+        ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
+    target_link_libraries(cuda_rasterizer
+        glm::glm
+        ${TORCH_LIBRARIES}
+        # Eigen3::Eigen
+    )
+endif()
 
 ##################################################################################
 ##  Build the ImGui library to ${PROJECT_SOURCE_DIR}/lib

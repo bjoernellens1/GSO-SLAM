@@ -1,0 +1,198 @@
+# ==========================================================================
+# compile-test.yml
+#
+# Validates that the GSO-SLAM C++ project compiles successfully for both
+# CUDA (NVIDIA) and ROCm (AMD) build variants.
+#
+# Strategy
+# --------
+# Each job runs `docker build --target configure` which:
+#   1. Pulls the GPU-toolchain base image (CUDA or ROCm).
+#   2. Installs all system dependencies via apt.
+#   3. Runs `cmake ..` — exercises find_package() for every dependency and
+#      triggers the CMake FetchContent download of the Rerun SDK.
+#
+# A separate "full build" job (compile-full-*) runs `docker build --target
+# builder` to perform the actual make compilation.  These jobs are separated
+# so that cmake configuration failures are reported quickly, and the slower
+# full compilation is only attempted after configure passes.
+#
+# Layer caching
+# -------------
+# Docker layer cache is stored in the GitHub Actions cache (type=gha).
+# The deps and configure layers are shared with the docker-build.yml
+# workflow via the same scope name, so they are only downloaded and built
+# once per repository.
+#
+# Runner requirements
+# -------------------
+# • compile-configure-cuda  : ubuntu-latest (standard, ~14 GB disk)
+# • compile-configure-rocm  : ubuntu-latest — may need larger runner due to
+#     the ~30 GB ROCm base image.  Change `runs-on` to a larger runner or
+#     self-hosted runner if the standard runner runs out of disk.
+# • compile-full-*          : Recommended on self-hosted runners with GPUs
+#     for accurate timing; standard runners can compile but will be slow.
+# ==========================================================================
+
+name: Compile Test
+
+on:
+  push:
+    branches: [main, "feature/**", "fix/**"]
+    paths:
+      - "**.cpp"
+      - "**.cu"
+      - "**.h"
+      - "**.cuh"
+      - "CMakeLists.txt"
+      - "cmake/**"
+      - "docker/Dockerfile.*"
+      - ".github/workflows/compile-test.yml"
+  pull_request:
+    paths:
+      - "**.cpp"
+      - "**.cu"
+      - "**.h"
+      - "**.cuh"
+      - "CMakeLists.txt"
+      - "cmake/**"
+      - "docker/Dockerfile.*"
+      - ".github/workflows/compile-test.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: compile-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # --------------------------------------------------------------------------
+  # CMake configure — CUDA
+  # --------------------------------------------------------------------------
+  configure-cuda:
+    name: "cmake configure (CUDA)"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
+          sudo apt-get clean
+          df -h
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build configure stage (CUDA)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.cuda
+          target: configure
+          push: false
+          cache-from: type=gha,scope=cuda
+          cache-to: type=gha,scope=cuda,mode=max
+
+  # --------------------------------------------------------------------------
+  # CMake configure — ROCm
+  # --------------------------------------------------------------------------
+  configure-rocm:
+    name: "cmake configure (ROCm)"
+    # The ROCm base image is large (~30 GB); upgrade to a larger runner if
+    # the standard runner runs out of disk space.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
+          sudo apt-get clean
+          df -h
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build configure stage (ROCm)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.rocm
+          target: configure
+          push: false
+          cache-from: type=gha,scope=rocm
+          cache-to: type=gha,scope=rocm,mode=max
+
+  # --------------------------------------------------------------------------
+  # Full compile — CUDA   (runs after configure passes)
+  # --------------------------------------------------------------------------
+  compile-full-cuda:
+    name: "make build (CUDA)"
+    needs: configure-cuda
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
+          sudo apt-get clean
+          df -h
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Full build (CUDA)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.cuda
+          target: builder
+          push: false
+          cache-from: type=gha,scope=cuda
+          cache-to: type=gha,scope=cuda,mode=max
+
+  # --------------------------------------------------------------------------
+  # Full compile — ROCm   (runs after configure passes)
+  # --------------------------------------------------------------------------
+  compile-full-rocm:
+    name: "make build (ROCm)"
+    needs: configure-rocm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
+          sudo apt-get clean
+          df -h
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Full build (ROCm)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.rocm
+          target: builder
+          push: false
+          cache-from: type=gha,scope=rocm
+          cache-to: type=gha,scope=rocm,mode=max

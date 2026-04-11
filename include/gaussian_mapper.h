@@ -33,9 +33,11 @@
 #include <mutex>
 
 #include <opencv2/opencv.hpp>
+#ifndef USE_ROCM
 #include <opencv2/cudaimgproc.hpp>
 #include <opencv2/cudastereo.hpp>
 #include <opencv2/cudawarping.hpp>
+#endif
 
 #include <jsoncpp/json/json.h>
 
@@ -401,7 +403,11 @@ protected:
     int stereo_min_disparity_ = 0;
     int stereo_num_disparity_ = 128;
     cv::Mat stereo_Q_;
+#ifdef USE_ROCM
+    cv::Ptr<cv::StereoSGBM> stereo_cv_sgbm_;
+#else
     cv::Ptr<cv::cuda::StereoSGM> stereo_cv_sgm_;
+#endif
     float RGBD_min_depth_ = 0.0f;
     float RGBD_max_depth_ = 100.0f;
 

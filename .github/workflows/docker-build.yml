@@ -1,0 +1,156 @@
+# ==========================================================================
+# docker-build.yml
+#
+# Build and publish Docker images for GSO-SLAM to the GitHub Container
+# Registry (ghcr.io).
+#
+# Triggers:
+#   • Push to main            → builds + pushes both :rocm-latest / :cuda-latest
+#   • New semver tag (v*)     → builds + pushes versioned tags as well
+#   • Manual workflow dispatch
+#
+# Images produced:
+#   ghcr.io/<owner>/gso-slam:rocm-<sha|version>
+#   ghcr.io/<owner>/gso-slam:cuda-<sha|version>
+#
+# Requirements:
+#   • Standard GitHub-hosted runner is sufficient for CUDA (ubuntu-latest,
+#     ~14 GB disk).  The ROCm image is significantly larger; if the standard
+#     runner runs out of disk space, switch to a larger runner or a self-
+#     hosted runner by changing `runs-on` in the build-rocm job.
+# ==========================================================================
+
+name: Build Docker Images
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+# Prevent concurrent builds on the same ref
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/gso-slam
+
+jobs:
+  # --------------------------------------------------------------------------
+  # ROCm / AMD GPU image
+  # --------------------------------------------------------------------------
+  build-rocm:
+    name: Build ROCm image
+    # For the large ROCm base image (~30 GB) a larger runner is recommended.
+    # Switch to self-hosted or a GitHub larger runner if this OOMs / runs out
+    # of disk on the standard runner.
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta-rocm
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            suffix=-rocm,onlatest=true
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix=sha-
+            type=raw,value=rocm-latest,enable={{is_default_branch}}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Free up disk space on the runner before pulling large base images
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
+          sudo apt-get clean
+          df -h
+
+      - name: Build and push ROCm image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.rocm
+          # Build up to the "builder" target (full compilation)
+          target: builder
+          push: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
+          tags: ${{ steps.meta-rocm.outputs.tags }}
+          labels: ${{ steps.meta-rocm.outputs.labels }}
+          cache-from: type=gha,scope=rocm
+          cache-to: type=gha,scope=rocm,mode=max
+
+  # --------------------------------------------------------------------------
+  # CUDA / NVIDIA GPU image
+  # --------------------------------------------------------------------------
+  build-cuda:
+    name: Build CUDA image
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta-cuda
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            suffix=-cuda,onlatest=true
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix=sha-
+            type=raw,value=cuda-latest,enable={{is_default_branch}}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
+          sudo apt-get clean
+          df -h
+
+      - name: Build and push CUDA image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.cuda
+          target: builder
+          push: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
+          tags: ${{ steps.meta-cuda.outputs.tags }}
+          labels: ${{ steps.meta-cuda.outputs.labels }}
+          cache-from: type=gha,scope=cuda
+          cache-to: type=gha,scope=cuda,mode=max

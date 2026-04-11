@@ -11,8 +11,12 @@
 
 #include "forward.h"
 #include "auxiliary.h"
+#ifdef USE_ROCM
+#include <hip/hip_cooperative_groups.h>
+#else
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#endif
 namespace cg = cooperative_groups;
 
 // Forward method for converting the input spherical harmonics
