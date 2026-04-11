@@ -22,7 +22,11 @@
 #include <algorithm>
 
 #include <torch/torch.h>
+#ifdef USE_ROCM
+#include <c10/hip/HIPCachingAllocator.h>
+#else
 #include <c10/cuda/CUDACachingAllocator.h>
+#endif
 
 #include "thirdparty/Sophus/sophus/se3.hpp"
 

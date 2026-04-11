@@ -309,4 +309,33 @@ throw std::runtime_error(cudaGetErrorString(ret)); \
 } \
 }
 
+#ifdef USE_ROCM
+// HIP provides CUDA-compatible API names via hip_runtime.h,
+// but provide explicit aliases for clarity and safety.
+#ifndef cudaMemcpy
+#define cudaMemcpy hipMemcpy
+#endif
+#ifndef cudaMemcpyDeviceToHost
+#define cudaMemcpyDeviceToHost hipMemcpyDeviceToHost
+#endif
+#ifndef cudaMemset
+#define cudaMemset hipMemset
+#endif
+#ifndef cudaDeviceSynchronize
+#define cudaDeviceSynchronize hipDeviceSynchronize
+#endif
+#ifndef cudaGetErrorString
+#define cudaGetErrorString hipGetErrorString
+#endif
+#ifndef cudaSuccess
+#define cudaSuccess hipSuccess
+#endif
+#ifndef cudaMalloc
+#define cudaMalloc hipMalloc
+#endif
+#ifndef cudaFree
+#define cudaFree hipFree
+#endif
+#endif
+
 #endif

@@ -16,7 +16,11 @@
 #include <iostream>
 #include <tuple>
 #include <stdio.h>
+#ifdef USE_ROCM
+#include <hip/hip_runtime.h>
+#else
 #include <cuda_runtime_api.h>
+#endif
 #include <memory>
 #include "cuda_rasterizer/config.h"
 #include "cuda_rasterizer/rasterizer.h"

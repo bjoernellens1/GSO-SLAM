@@ -11,6 +11,29 @@
 
 #define BOX_SIZE 1024
 
+#ifdef USE_ROCM
+#include <hip/hip_runtime.h>
+#include "simple_knn.h"
+#include <hipcub/hipcub.hpp>
+#include <vector>
+#include <thrust/device_vector.h>
+#include <thrust/sequence.h>
+#include <hip/hip_cooperative_groups.h>
+
+namespace cub = hipcub;
+#ifndef cudaMalloc
+#define cudaMalloc hipMalloc
+#endif
+#ifndef cudaMemcpy
+#define cudaMemcpy hipMemcpy
+#endif
+#ifndef cudaMemcpyDeviceToHost
+#define cudaMemcpyDeviceToHost hipMemcpyDeviceToHost
+#endif
+#ifndef cudaFree
+#define cudaFree hipFree
+#endif
+#else
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include "simple_knn.h"
@@ -23,6 +46,7 @@
 #define __CUDACC__
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#endif
 
 namespace cg = cooperative_groups;
 
