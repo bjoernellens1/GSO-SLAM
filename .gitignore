@@ -10,3 +10,7 @@ build-*
 result.txt
 experiments_bash/results
 imgui.ini
+site/
+docs/api/html/
+docs/api/latex/
+docs/api/xml/
