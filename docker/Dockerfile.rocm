@@ -32,7 +32,13 @@ FROM rocm/pytorch:rocm7.2.1_ubuntu24.04_py3.12_pytorch_release_2.9.1 AS deps
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && \
+    # Pin ROCm packages to prevent Ubuntu's older/conflicting versions from
+    # replacing the ROCm 7.2.1 packages already installed in the base image.
+    # In particular Ubuntu 24.04 ships 'hipcc 5.7.1' which overwrites the
+    # ROCm 7.2 hipcc binary that CMake needs at /opt/rocm/bin/hipcc.
+    apt-mark hold hipcc hip-runtime-amd hip-dev hip-doc && \
+    apt-get install -y --no-install-recommends \
         cmake \
         git \
         build-essential \
@@ -69,6 +75,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # --------------------------------------------------------------------------
 FROM deps AS configure
 
+# PyTorch's ROCm cmake loader requires this env var to specify target archs
+ENV PYTORCH_ROCM_ARCH="gfx906;gfx908;gfx1030;gfx1100"
+
 WORKDIR /workspace/GSO-SLAM
 
 # Copy source (submodules are committed in-tree except sse2neon)
@@ -84,6 +93,7 @@ RUN TORCH_CMAKE_PREFIX=$(python3 -c "import torch; print(torch.utils.cmake_prefi
     mkdir -p build && cd build && \
     cmake \
         -DUSE_ROCM=ON \
+        -DHIP_ROOT_DIR=/opt/rocm \
         -DCMAKE_PREFIX_PATH="/opt/rocm;${TORCH_CMAKE_PREFIX}" \
         -DTorch_DIR="${TORCH_CMAKE_PREFIX}/Torch" \
         -DCMAKE_BUILD_TYPE=Release \
@@ -93,6 +103,8 @@ RUN TORCH_CMAKE_PREFIX=$(python3 -c "import torch; print(torch.utils.cmake_prefi
 # Stage 3 – builder: full compilation
 # --------------------------------------------------------------------------
 FROM configure AS builder
+
+ENV PYTORCH_ROCM_ARCH="gfx906;gfx908;gfx1030;gfx1100"
 
 RUN cd /workspace/GSO-SLAM/build && \
     make -j$(nproc) 2>&1 | tee /tmp/build.log

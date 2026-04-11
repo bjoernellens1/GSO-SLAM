@@ -35,8 +35,11 @@ find_package(SuiteParse REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(Boost COMPONENTS system thread) 
 if(USE_ROCM)
-    find_package(HIP REQUIRED)
-    find_package(hipcub REQUIRED)
+    # Use config-mode find_package for ROCm 5.7+ (lowercase 'hip').
+    # The legacy uppercase FindHIP module is incompatible with PyTorch's
+    # LoadHIP.cmake which is loaded by find_package(Torch) on ROCm builds.
+    find_package(hip REQUIRED CONFIG)
+    find_package(hipcub REQUIRED CONFIG)
     add_definitions(-DUSE_ROCM)
 else()
     find_package(CUDA REQUIRED)

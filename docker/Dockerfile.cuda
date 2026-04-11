@@ -1,14 +1,14 @@
 # ==========================================================================
 # GSO-SLAM  —  CUDA / NVIDIA GPU build
 #
-# Base image: nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+# Base image: pytorch/pytorch:2.4.1-cuda12.4-cudnn9-devel
 #   • Ubuntu 22.04
-#   • CUDA 12.4.1 + cuDNN  (nvcc, CUDA headers at /usr/local/cuda)
-#
-# PyTorch:  2.4.1 + cu124  (installed via pip in the deps stage)
+#   • CUDA 12.4 + cuDNN 9  (nvcc, CUDA headers at /usr/local/cuda)
+#   • Python 3.11
+#   • PyTorch 2.4.1 (CUDA 12.4 wheel, pre-installed)
 #
 # Build targets:
-#   deps       – CUDA base + system libraries + PyTorch  (cacheable base)
+#   deps       – base + system libraries  (cacheable base layer)
 #   configure  – cmake configure only (quick smoke-test, ~5 min)
 #   builder    – full cmake + make compilation
 #   runtime    – minimal image with compiled artefacts
@@ -25,17 +25,14 @@
 # ==========================================================================
 
 # --------------------------------------------------------------------------
-# Stage 1 – deps: CUDA base + system libraries + PyTorch
+# Stage 1 – deps: PyTorch base + system libraries
 # --------------------------------------------------------------------------
-FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS deps
+FROM pytorch/pytorch:2.4.1-cuda12.4-cudnn9-devel AS deps
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system libraries and Python
+# Install system libraries (Python is already in the pytorch base image)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 \
-        python3-pip \
-        python3-dev \
         cmake \
         git \
         build-essential \
@@ -65,11 +62,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         # Fast ANN (via PCL)
         libflann-dev \
     && rm -rf /var/lib/apt/lists/*
-
-# Install PyTorch with CUDA 12.4 support
-RUN pip3 install --no-cache-dir \
-        torch==2.4.1 torchvision==0.19.1 \
-        --index-url https://download.pytorch.org/whl/cu124
 
 # --------------------------------------------------------------------------
 # Stage 2 – configure: cmake configure only (no compilation)
