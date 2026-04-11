@@ -71,6 +71,8 @@ jobs:
   configure-cuda:
     name: "cmake configure (CUDA)"
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout repository
@@ -103,6 +105,8 @@ jobs:
     # The ROCm base image is large (~30 GB); upgrade to a larger runner if
     # the standard runner runs out of disk space.
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout repository
@@ -134,6 +138,8 @@ jobs:
     name: "make build (CUDA)"
     needs: configure-cuda
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout repository
@@ -165,6 +171,8 @@ jobs:
     name: "make build (ROCm)"
     needs: configure-rocm
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout repository
