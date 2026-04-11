@@ -1,0 +1,117 @@
+# ==========================================================================
+# GSO-SLAM  —  ROCm / AMD GPU build
+#
+# Base image: rocm/pytorch:rocm7.2.1_ubuntu24.04_py3.12_pytorch_release_2.9.1
+#   • Ubuntu 24.04
+#   • ROCm 7.2.1  (hipcc, hipCUB, HIP runtime + headers at /opt/rocm)
+#   • Python 3.12
+#   • PyTorch 2.9.1 (ROCm wheel, pre-installed)
+#
+# Build targets:
+#   deps       – system libraries only (cacheable base layer)
+#   configure  – cmake configure only (quick smoke-test, ~5 min)
+#   builder    – full cmake + make compilation
+#   runtime    – minimal image with compiled artefacts
+#
+# Usage examples:
+#   # Quick configure smoke-test (no GPU needed, validates cmake):
+#   docker build --target configure -f docker/Dockerfile.rocm .
+#
+#   # Full build:
+#   docker build -f docker/Dockerfile.rocm -t gso-slam:rocm .
+#
+#   # Run:
+#   docker run --device=/dev/kfd --device=/dev/dri --group-add video \
+#          -it gso-slam:rocm /bin/bash
+# ==========================================================================
+
+# --------------------------------------------------------------------------
+# Stage 1 – deps: install all system dependencies
+# --------------------------------------------------------------------------
+FROM rocm/pytorch:rocm7.2.1_ubuntu24.04_py3.12_pytorch_release_2.9.1 AS deps
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        cmake \
+        git \
+        build-essential \
+        pkg-config \
+        # Sparse linear algebra (DSO Hessian back-end)
+        libsuitesparse-dev \
+        # Dense linear algebra
+        libeigen3-dev \
+        # Multi-threading
+        libboost-all-dev \
+        # GLSL math types for GPU kernels
+        libglm-dev \
+        # Config serialisation
+        libjsoncpp-dev \
+        # VTK (PCL transitive dependency)
+        libvtk9-dev \
+        # Point-cloud utilities
+        libpcl-dev \
+        # Image I/O and stereo depth
+        libopencv-dev \
+        libopencv-contrib-dev \
+        # ImGui/OpenGL viewer
+        libglfw3-dev \
+        libglew-dev \
+        # Optional: zipped dataset archives
+        libzip-dev \
+        # Fast ANN (via PCL)
+        libflann-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# --------------------------------------------------------------------------
+# Stage 2 – configure: cmake configure only (no compilation)
+#   Validates that all find_package() calls succeed and FetchContent works.
+# --------------------------------------------------------------------------
+FROM deps AS configure
+
+WORKDIR /workspace/GSO-SLAM
+
+# Copy source (submodules are committed in-tree except sse2neon)
+COPY . .
+
+# sse2neon is a git submodule — fetch it at build time
+RUN git clone --depth 1 \
+        https://github.com/jratcliff63367/sse2neon.git \
+        thirdparty/sse2neon 2>/dev/null || true
+
+# Discover PyTorch cmake prefix provided by the pre-installed ROCm wheel
+RUN TORCH_CMAKE_PREFIX=$(python3 -c "import torch; print(torch.utils.cmake_prefix_path)") && \
+    mkdir -p build && cd build && \
+    cmake \
+        -DUSE_ROCM=ON \
+        -DCMAKE_PREFIX_PATH="/opt/rocm;${TORCH_CMAKE_PREFIX}" \
+        -DTorch_DIR="${TORCH_CMAKE_PREFIX}/Torch" \
+        -DCMAKE_BUILD_TYPE=Release \
+        ..
+
+# --------------------------------------------------------------------------
+# Stage 3 – builder: full compilation
+# --------------------------------------------------------------------------
+FROM configure AS builder
+
+RUN cd /workspace/GSO-SLAM/build && \
+    make -j$(nproc) 2>&1 | tee /tmp/build.log
+
+# --------------------------------------------------------------------------
+# Stage 4 – runtime: lean image with just compiled artefacts + runtime deps
+# --------------------------------------------------------------------------
+FROM deps AS runtime
+
+WORKDIR /workspace/GSO-SLAM
+
+# Copy compiled libraries and executables
+COPY --from=builder /workspace/GSO-SLAM/build/lib  /workspace/GSO-SLAM/lib
+COPY --from=builder /workspace/GSO-SLAM/build/bin  /workspace/GSO-SLAM/bin
+
+# Copy config files and scripts
+COPY cfg/           /workspace/GSO-SLAM/cfg/
+COPY experiments_bash/ /workspace/GSO-SLAM/experiments_bash/
+
+ENV LD_LIBRARY_PATH=/workspace/GSO-SLAM/lib:$LD_LIBRARY_PATH
+
+CMD ["/bin/bash"]

@@ -1,0 +1,123 @@
+# ==========================================================================
+# GSO-SLAM  —  CUDA / NVIDIA GPU build
+#
+# Base image: nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+#   • Ubuntu 22.04
+#   • CUDA 12.4.1 + cuDNN  (nvcc, CUDA headers at /usr/local/cuda)
+#
+# PyTorch:  2.4.1 + cu124  (installed via pip in the deps stage)
+#
+# Build targets:
+#   deps       – CUDA base + system libraries + PyTorch  (cacheable base)
+#   configure  – cmake configure only (quick smoke-test, ~5 min)
+#   builder    – full cmake + make compilation
+#   runtime    – minimal image with compiled artefacts
+#
+# Usage examples:
+#   # Quick configure smoke-test (no GPU at build time):
+#   docker build --target configure -f docker/Dockerfile.cuda .
+#
+#   # Full build:
+#   docker build -f docker/Dockerfile.cuda -t gso-slam:cuda .
+#
+#   # Run (requires NVIDIA container runtime):
+#   docker run --gpus all -it gso-slam:cuda /bin/bash
+# ==========================================================================
+
+# --------------------------------------------------------------------------
+# Stage 1 – deps: CUDA base + system libraries + PyTorch
+# --------------------------------------------------------------------------
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS deps
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system libraries and Python
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 \
+        python3-pip \
+        python3-dev \
+        cmake \
+        git \
+        build-essential \
+        pkg-config \
+        # Sparse linear algebra (DSO Hessian back-end)
+        libsuitesparse-dev \
+        # Dense linear algebra
+        libeigen3-dev \
+        # Multi-threading
+        libboost-all-dev \
+        # GLSL math types for GPU kernels
+        libglm-dev \
+        # Config serialisation
+        libjsoncpp-dev \
+        # VTK (PCL transitive dependency)
+        libvtk9-dev \
+        # Point-cloud utilities
+        libpcl-dev \
+        # Image I/O and stereo depth
+        libopencv-dev \
+        libopencv-contrib-dev \
+        # ImGui/OpenGL viewer
+        libglfw3-dev \
+        libglew-dev \
+        # Optional: zipped dataset archives
+        libzip-dev \
+        # Fast ANN (via PCL)
+        libflann-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install PyTorch with CUDA 12.4 support
+RUN pip3 install --no-cache-dir \
+        torch==2.4.1 torchvision==0.19.1 \
+        --index-url https://download.pytorch.org/whl/cu124
+
+# --------------------------------------------------------------------------
+# Stage 2 – configure: cmake configure only (no compilation)
+#   Validates that all find_package() calls succeed and FetchContent works.
+# --------------------------------------------------------------------------
+FROM deps AS configure
+
+WORKDIR /workspace/GSO-SLAM
+
+# Copy source (submodules are committed in-tree except sse2neon)
+COPY . .
+
+# sse2neon is a git submodule — fetch it at build time
+RUN git clone --depth 1 \
+        https://github.com/jratcliff63367/sse2neon.git \
+        thirdparty/sse2neon 2>/dev/null || true
+
+# Discover PyTorch cmake prefix
+RUN TORCH_CMAKE_PREFIX=$(python3 -c "import torch; print(torch.utils.cmake_prefix_path)") && \
+    mkdir -p build && cd build && \
+    cmake \
+        -DTorch_DIR="${TORCH_CMAKE_PREFIX}/Torch" \
+        -DCMAKE_BUILD_TYPE=Release \
+        ..
+
+# --------------------------------------------------------------------------
+# Stage 3 – builder: full compilation
+# --------------------------------------------------------------------------
+FROM configure AS builder
+
+RUN cd /workspace/GSO-SLAM/build && \
+    make -j$(nproc) 2>&1 | tee /tmp/build.log
+
+# --------------------------------------------------------------------------
+# Stage 4 – runtime: lean image with just compiled artefacts + runtime deps
+# --------------------------------------------------------------------------
+FROM deps AS runtime
+
+WORKDIR /workspace/GSO-SLAM
+
+# Copy compiled libraries and executables
+COPY --from=builder /workspace/GSO-SLAM/build/lib  /workspace/GSO-SLAM/lib
+COPY --from=builder /workspace/GSO-SLAM/build/bin  /workspace/GSO-SLAM/bin
+
+# Copy config files and scripts
+COPY cfg/           /workspace/GSO-SLAM/cfg/
+COPY experiments_bash/ /workspace/GSO-SLAM/experiments_bash/
+
+ENV LD_LIBRARY_PATH=/workspace/GSO-SLAM/lib:$LD_LIBRARY_PATH
+
+CMD ["/bin/bash"]
