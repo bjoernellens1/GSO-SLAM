@@ -21,6 +21,7 @@
 #include <fstream>
 #include <algorithm>
 #include <numeric>
+#include <cfloat>
 
 #ifdef USE_ROCM
 #include <hip/hip_runtime.h>
@@ -101,7 +102,7 @@ __global__ void search_neighborhood_to_estimate_depth_and_reproject_pinhole(
         return;
     }
 
-    float min_dist = MAXFLOAT;
+    float min_dist = FLT_MAX;
     float depth = -1.0f;
 
     for (int i = 0; i < N; ++i) {

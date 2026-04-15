@@ -471,7 +471,7 @@ void GaussianModel::increasePcd(std::vector<float> points, std::vector<float> co
         new_exist_since_iter
     );
 
-    c10::cuda::CUDACachingAllocator::emptyCache();
+    GSO_GPU_CACHE_EMPTY();
 // auto time3 = std::chrono::steady_clock::now();
 // time = std::chrono::duration_cast<std::chrono::milliseconds>(time3-time2).count();
 // std::cout << "increasePcd(umap) postfix time: " << time << " ms" <<std::endl;
@@ -599,7 +599,7 @@ void GaussianModel::increasePcd(std::vector<float> points, std::vector<float> co
         new_exist_since_iter
     );
 
-    c10::cuda::CUDACachingAllocator::emptyCache();
+    GSO_GPU_CACHE_EMPTY();
 // auto time3 = std::chrono::steady_clock::now();
 // time = std::chrono::duration_cast<std::chrono::milliseconds>(time3-time2).count();
 // std::cout << "increasePcd(umap) postfix time: " << time << " ms" <<std::endl;
@@ -688,7 +688,7 @@ void GaussianModel::increasePcd(torch::Tensor& new_point_cloud, torch::Tensor& n
         new_exist_since_iter
     );
 
-    c10::cuda::CUDACachingAllocator::emptyCache();
+    GSO_GPU_CACHE_EMPTY();
 
 // auto time3 = std::chrono::steady_clock::now();
 // time = std::chrono::duration_cast<std::chrono::milliseconds>(time3-time2).count();
@@ -873,10 +873,9 @@ void GaussianModel::setRotationLearningRate(float rot_lr)
 }
 
 namespace {
-std::string tensor_state_key(const torch::Tensor& tensor)
+void* tensor_state_key(const torch::Tensor& tensor)
 {
-    auto* impl = tensor.unsafeGetTensorImpl();
-    return std::to_string(reinterpret_cast<std::uintptr_t>(impl));
+    return tensor.unsafeGetTensorImpl();
 }
 }  // namespace
 
@@ -1155,7 +1154,7 @@ void GaussianModel::densifyAndPrune(
     }
     this->prunePoints(prune_mask);
 
-    c10::cuda::CUDACachingAllocator::emptyCache(); // torch.cuda.empty_cache()
+    GSO_GPU_CACHE_EMPTY(); // torch.cuda.empty_cache()
 }
 
 void GaussianModel::addDensificationStats(
