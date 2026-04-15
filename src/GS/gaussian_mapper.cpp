@@ -245,7 +245,7 @@ void GaussianMapper::readConfigFromFile(std::filesystem::path cfg_path)
         settings_file["Stereo.min_disparity"].operator int();
     stereo_num_disparity_ =
         settings_file["Stereo.num_disparity"].operator int();
-#ifdef USE_ROCM
+#if !GSO_HAS_OPENCV_CUDA
     stereo_cv_sgbm_ = cv::StereoSGBM::create(
         stereo_min_disparity_, stereo_num_disparity_, /*blockSize=*/5);
 #else
@@ -512,7 +512,7 @@ void GaussianMapper::run()
             for (auto& kfit : scene_->keyframes()) {
                 auto pkf = kfit.second;
                 if (device_type_ == torch::kCUDA) {
-#ifndef USE_ROCM
+#if GSO_HAS_OPENCV_CUDA
                     cv::cuda::GpuMat img_gpu;
                     img_gpu.upload(pkf->img_undist_);
                     pkf->gaus_pyramid_original_image_.resize(num_gaus_pyramid_sub_levels_);
@@ -638,7 +638,7 @@ void GaussianMapper::trainColmap()
         auto pkf = kfit.second;
         increaseKeyframeTimesOfUse(pkf, newKeyframeTimesOfUse());
         if (device_type_ == torch::kCUDA) {
-#ifndef USE_ROCM
+#if GSO_HAS_OPENCV_CUDA
             cv::cuda::GpuMat img_gpu;
             img_gpu.upload(pkf->img_undist_);
             pkf->gaus_pyramid_original_image_.resize(num_gaus_pyramid_sub_levels_);
@@ -1106,7 +1106,7 @@ void GaussianMapper::combineMappingOperations()
             new_kf->img_auxiliary_undist_ = imgAux_undistorted;
             // Prepare multi resolution images for training
             if (device_type_ == torch::kCUDA) {
-#ifndef USE_ROCM
+#if GSO_HAS_OPENCV_CUDA
                 cv::cuda::GpuMat img_gpu;
                 img_gpu.upload(new_kf->img_undist_);
                 new_kf->gaus_pyramid_original_image_.resize(num_gaus_pyramid_sub_levels_);
@@ -1244,7 +1244,7 @@ void GaussianMapper::handleNewKeyframe(
 
     // Prepare multi resolution images for training
     if (device_type_ == torch::kCUDA) {
-#ifndef USE_ROCM
+#if GSO_HAS_OPENCV_CUDA
         cv::cuda::GpuMat img_gpu;
         img_gpu.upload(pkf->img_undist_);
         pkf->gaus_pyramid_original_image_.resize(num_gaus_pyramid_sub_levels_);
@@ -1480,7 +1480,7 @@ void GaussianMapper::increasePcdByKeyframeInactiveGeoDensify(
         torch::Tensor kps_has3D_tensor = torch::where(
             kps_point_local_tensor.index({torch::indexing::Slice(), 2}) > 0.0f, true, false);
 
-#ifdef USE_ROCM
+#if !GSO_HAS_OPENCV_CUDA
         torch::Tensor colors = tensor_utils::cvMat2TorchTensor_Float32(pkf->img_undist_, device_type_);
 #else
         cv::cuda::GpuMat rgb_gpu;
@@ -1515,7 +1515,7 @@ void GaussianMapper::increasePcdByKeyframeInactiveGeoDensify(
     case STEREO:
     {
 // savePly(result_dir_ / (std::to_string(getIteration()) + "_" + std::to_string(pkf->fid_) + "_0_before_inactive_geo_densify"));
-#ifdef USE_ROCM
+#if !GSO_HAS_OPENCV_CUDA
         // CPU SGM fallback for ROCm (OpenCV CUDA stereo is not available)
         cv::Mat left_gray, right_gray;
         cv::cvtColor(pkf->img_undist_, left_gray, cv::COLOR_RGB2GRAY);
@@ -1584,7 +1584,7 @@ void GaussianMapper::increasePcdByKeyframeInactiveGeoDensify(
         }
         point_valid_flags = torch::logical_and(
             point_valid_flags,
-#ifdef USE_ROCM
+#if !GSO_HAS_OPENCV_CUDA
             torch::where(disp > static_cast<float>(stereo_cv_sgbm_->getMinDisparity()), true, false));
         point_valid_flags = torch::logical_and(
             point_valid_flags,
@@ -1620,7 +1620,7 @@ void GaussianMapper::increasePcdByKeyframeInactiveGeoDensify(
     case RGBD:
     {
 // savePly(result_dir_ / (std::to_string(getIteration()) + "_" + std::to_string(pkf->fid_) + "_0_before_inactive_geo_densify"));
-#ifdef USE_ROCM
+#if !GSO_HAS_OPENCV_CUDA
         torch::Tensor rgb = tensor_utils::cvMat2TorchTensor_Float32(pkf->img_undist_, device_type_);
         rgb = rgb.permute({1, 2, 0}).flatten(0, 1).contiguous();
         torch::Tensor depth = tensor_utils::cvMat2TorchTensor_Float32(pkf->img_auxiliary_undist_, device_type_);

@@ -65,6 +65,12 @@ __device__ const float SH_C3[] = {
 	-0.5900435899266435f
 };
 
+#ifdef USE_ROCM
+#define GSO_DEVICE_TRAP() __builtin_trap()
+#else
+#define GSO_DEVICE_TRAP() __trap()
+#endif
+
 __forceinline__ __device__ float ndc2Pix(float v, int S)
 {
 	return ((v + 1.0) * S - 1.0) * 0.5;
@@ -208,7 +214,7 @@ __forceinline__ __device__ bool in_frustum(int idx,
 		if (prefiltered)
 		{
 			printf("Point is filtered although prefiltered is set. This shouldn't happen!");
-			__trap();
+			GSO_DEVICE_TRAP();
 		}
 		return false;
 	}
@@ -291,11 +297,11 @@ quat_to_rotmat_vjp(const glm::vec4 quat, const glm::mat3 v_R) {
 
 inline __device__ glm::mat3
 scale_to_mat(const glm::vec2 scale, const float glob_scale) {
-	glm::mat3 S = glm::mat3(1.f);
-	S[0][0] = glob_scale * scale.x;
-	S[1][1] = glob_scale * scale.y;
-	// S[2][2] = glob_scale * scale.z;
-	return S;
+	return glm::mat3(
+		glm::vec3(glob_scale * scale.x, 0.f, 0.f),
+		glm::vec3(0.f, glob_scale * scale.y, 0.f),
+		glm::vec3(0.f, 0.f, 1.f)
+	);
 }
 
 

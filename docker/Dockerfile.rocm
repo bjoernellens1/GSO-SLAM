@@ -106,8 +106,7 @@ FROM configure AS builder
 
 ENV PYTORCH_ROCM_ARCH="gfx906;gfx908;gfx1030;gfx1100"
 
-RUN cd /workspace/GSO-SLAM/build && \
-    make -j$(nproc) 2>&1 | tee /tmp/build.log
+RUN bash -lc 'set -o pipefail; cd /workspace/GSO-SLAM/build && make -j"$(nproc)" 2>&1 | tee /tmp/build.log'
 
 # --------------------------------------------------------------------------
 # Stage 4 – runtime: lean image with just compiled artefacts + runtime deps

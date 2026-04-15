@@ -5,13 +5,14 @@
 # Registry (ghcr.io).
 #
 # Triggers:
-#   • Push to main            → builds + pushes both :rocm-latest / :cuda-latest
+#   • Push to main            → builds + pushes both `gso-slam-rocm:rocm-latest`
+#                               and `gso-slam-cuda:cuda-latest`
 #   • New semver tag (v*)     → builds + pushes versioned tags as well
 #   • Manual workflow dispatch
 #
 # Images produced:
-#   ghcr.io/<owner>/gso-slam:rocm-<sha|version>
-#   ghcr.io/<owner>/gso-slam:cuda-<sha|version>
+#   ghcr.io/<owner>/gso-slam-rocm:<tag>
+#   ghcr.io/<owner>/gso-slam-cuda:<tag>
 #
 # Requirements:
 #   • Standard GitHub-hosted runner is sufficient for CUDA (ubuntu-latest,
@@ -33,9 +34,13 @@ concurrency:
   group: docker-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  packages: write
+
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/gso-slam
+  IMAGE_NAMESPACE: ${{ github.repository_owner }}
 
 jobs:
   # --------------------------------------------------------------------------
@@ -47,10 +52,6 @@ jobs:
     # Switch to self-hosted or a GitHub larger runner if this OOMs / runs out
     # of disk on the standard runner.
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-      packages: write
 
     steps:
       - name: Checkout repository
@@ -67,9 +68,7 @@ jobs:
         id: meta-rocm
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          flavor: |
-            suffix=-rocm,onlatest=true
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/gso-slam-rocm
           tags: |
             type=ref,event=branch
             type=ref,event=tag
@@ -93,7 +92,7 @@ jobs:
           file: docker/Dockerfile.rocm
           # Build up to the "builder" target (full compilation)
           target: builder
-          push: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
+          push: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
           tags: ${{ steps.meta-rocm.outputs.tags }}
           labels: ${{ steps.meta-rocm.outputs.labels }}
           cache-from: type=gha,scope=rocm
@@ -105,10 +104,6 @@ jobs:
   build-cuda:
     name: Build CUDA image
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-      packages: write
 
     steps:
       - name: Checkout repository
@@ -125,9 +120,7 @@ jobs:
         id: meta-cuda
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          flavor: |
-            suffix=-cuda,onlatest=true
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/gso-slam-cuda
           tags: |
             type=ref,event=branch
             type=ref,event=tag
@@ -149,7 +142,7 @@ jobs:
           context: .
           file: docker/Dockerfile.cuda
           target: builder
-          push: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
+          push: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
           tags: ${{ steps.meta-cuda.outputs.tags }}
           labels: ${{ steps.meta-cuda.outputs.labels }}
           cache-from: type=gha,scope=cuda

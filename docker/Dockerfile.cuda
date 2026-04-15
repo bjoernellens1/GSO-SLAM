@@ -92,8 +92,7 @@ RUN TORCH_CMAKE_PREFIX=$(python3 -c "import torch; print(torch.utils.cmake_prefi
 # --------------------------------------------------------------------------
 FROM configure AS builder
 
-RUN cd /workspace/GSO-SLAM/build && \
-    make -j$(nproc) 2>&1 | tee /tmp/build.log
+RUN bash -lc 'set -o pipefail; cd /workspace/GSO-SLAM/build && make -j"$(nproc)" 2>&1 | tee /tmp/build.log'
 
 # --------------------------------------------------------------------------
 # Stage 4 – runtime: lean image with just compiled artefacts + runtime deps

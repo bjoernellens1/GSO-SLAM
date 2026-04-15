@@ -23,11 +23,9 @@
 #include <vector>
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgproc/types_c.h>
-#ifndef USE_ROCM
-#include <opencv2/cudawarping.hpp>
-#endif
 
 #include "types.h"
+#include "opencv_cuda_compat.h"
 #include "tensor_utils.h"
 
 class Camera
@@ -92,7 +90,7 @@ public:
 
         if (do_gaus_pyramid_training) {
             assert(!gaus_pyramid_height_.empty() && !gaus_pyramid_width_.empty());
-#ifdef USE_ROCM
+#if !GSO_HAS_OPENCV_CUDA
             gaus_pyramid_undistort_mask_.resize(num_gaus_pyramid_sub_levels_);
             for (int l = 0; l < num_gaus_pyramid_sub_levels_; ++l) {
                 cv::Mat undistort_mask_resized;

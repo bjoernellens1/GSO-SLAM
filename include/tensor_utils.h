@@ -21,10 +21,9 @@
 #include <Eigen/Geometry>
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgproc/types_c.h>
-#ifndef USE_ROCM
-#include <opencv2/cudaimgproc.hpp>
-#endif
 #include <torch/torch.h>
+
+#include "opencv_cuda_compat.h"
 
 namespace tensor_utils
 {
@@ -104,7 +103,7 @@ inline cv::Mat torchTensor2CvMat_Float32(torch::Tensor& tensor)
     return mat.clone();
 }
 
-#ifndef USE_ROCM
+#if GSO_HAS_OPENCV_CUDA
 inline torch::Tensor cvGpuMat2TorchTensor_Float32(cv::cuda::GpuMat& mat)
 {
     torch::Tensor mat_tensor, tensor;
@@ -179,7 +178,7 @@ inline cv::cuda::GpuMat torchTensor2CvGpuMat_Float32(torch::Tensor& tensor)
 
     return mat.clone();
 }
-#endif // !USE_ROCM
+#endif // GSO_HAS_OPENCV_CUDA
 
 inline torch::Tensor EigenMatrix2TorchTensor(
     Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic> eigen_matrix,

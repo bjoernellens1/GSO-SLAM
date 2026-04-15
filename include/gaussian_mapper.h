@@ -33,14 +33,9 @@
 #include <mutex>
 
 #include <opencv2/opencv.hpp>
-#ifndef USE_ROCM
-#include <opencv2/cudaimgproc.hpp>
-#include <opencv2/cudastereo.hpp>
-#include <opencv2/cudawarping.hpp>
-#endif
-
 #include <jsoncpp/json/json.h>
 
+#include "opencv_cuda_compat.h"
 #include "src/FullSystem/FullSystem.h"
 #include "src/FullSystem/HessianBlocks.h"
 #include "src/FullSystem/ImmaturePoint.h"
@@ -403,7 +398,7 @@ protected:
     int stereo_min_disparity_ = 0;
     int stereo_num_disparity_ = 128;
     cv::Mat stereo_Q_;
-#ifdef USE_ROCM
+#if !GSO_HAS_OPENCV_CUDA
     cv::Ptr<cv::StereoSGBM> stereo_cv_sgbm_;
 #else
     cv::Ptr<cv::cuda::StereoSGM> stereo_cv_sgm_;
