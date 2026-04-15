@@ -76,7 +76,7 @@ RUN apt-get update && \
 FROM deps AS configure
 
 # PyTorch's ROCm cmake loader requires this env var to specify target archs
-ENV PYTORCH_ROCM_ARCH="gfx906;gfx908;gfx1030;gfx1100"
+ENV PYTORCH_ROCM_ARCH="gfx906;gfx908;gfx90a;gfx942;gfx1030;gfx1100;gfx1151"
 
 WORKDIR /workspace/GSO-SLAM
 
@@ -104,7 +104,7 @@ RUN TORCH_CMAKE_PREFIX=$(python3 -c "import torch; print(torch.utils.cmake_prefi
 # --------------------------------------------------------------------------
 FROM configure AS builder
 
-ENV PYTORCH_ROCM_ARCH="gfx906;gfx908;gfx1030;gfx1100"
+ENV PYTORCH_ROCM_ARCH="gfx906;gfx908;gfx90a;gfx942;gfx1030;gfx1100;gfx1151"
 
 RUN bash -lc 'set -o pipefail; cd /workspace/GSO-SLAM/build && make -j"$(nproc)" 2>&1 | tee /tmp/build.log'
 

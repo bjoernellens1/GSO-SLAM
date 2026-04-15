@@ -24,8 +24,10 @@
 #include <torch/torch.h>
 #ifdef USE_ROCM
 #include <c10/hip/HIPCachingAllocator.h>
+#define GSO_GPU_CACHE_EMPTY() c10::hip::HIPCachingAllocator::emptyCache()
 #else
 #include <c10/cuda/CUDACachingAllocator.h>
+#define GSO_GPU_CACHE_EMPTY() c10::cuda::CUDACachingAllocator::emptyCache()
 #endif
 
 #include "thirdparty/Sophus/sophus/se3.hpp"

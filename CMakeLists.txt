@@ -80,6 +80,16 @@ if(USE_ROCM)
     find_package(hip REQUIRED CONFIG)
     find_package(hipcub REQUIRED CONFIG)
     add_definitions(-DUSE_ROCM)
+    # Supported AMD GPU architectures:
+    #   gfx906  = MI50/MI60           (CDNA 1)
+    #   gfx908  = MI100               (CDNA 1)
+    #   gfx90a  = MI210/MI250         (CDNA 2)
+    #   gfx942  = MI300X              (CDNA 3)
+    #   gfx1030 = RX 6800/6900       (RDNA 2)
+    #   gfx1100 = RX 7900 XTX        (RDNA 3)
+    #   gfx1151 = RX 9070            (RDNA 3.5)
+    set(GSO_HIP_ARCHITECTURES "gfx906;gfx908;gfx90a;gfx942;gfx1030;gfx1100;gfx1151"
+        CACHE STRING "Semicolon-separated list of AMD GPU architectures to compile for")
 else()
     find_package(CUDA REQUIRED)
 endif()
@@ -102,10 +112,12 @@ FetchContent_MakeAvailable(rerun_sdk)
 
 # flags
 add_definitions("-DENABLE_SSE")
-set(CMAKE_CXX_FLAGS
-   "${SSE_FLAGS} -O3 -g -std=c++0x -march=native"
-#   "${SSE_FLAGS} -O3 -g -std=c++0x -fno-omit-frame-pointer"
-)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -g")
+if(NOT USE_ROCM)
+    # -march=native is safe on host builds; ROCm Clang may warn for
+    # targets it does not recognise, so we only add it for CUDA builds.
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native")
+endif()
 
 if (MSVC)
      set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /EHsc")
@@ -201,7 +213,7 @@ if(USE_ROCM)
         PROPERTIES LANGUAGE HIP
     )
     set_target_properties(simple_knn PROPERTIES
-        HIP_ARCHITECTURES "gfx906;gfx908;gfx1030;gfx1100")
+        HIP_ARCHITECTURES "${GSO_HIP_ARCHITECTURES}")
 endif()
 # target_compile_features(simple_knn PUBLIC cxx_std_17)
 if(USE_ROCM)
@@ -240,7 +252,7 @@ if(USE_ROCM)
         PROPERTIES LANGUAGE HIP
     )
     set_target_properties(cuda_rasterizer PROPERTIES
-        HIP_ARCHITECTURES "gfx906;gfx908;gfx1030;gfx1100")
+        HIP_ARCHITECTURES "${GSO_HIP_ARCHITECTURES}")
 else()
     set_target_properties(cuda_rasterizer PROPERTIES CUDA_ARCHITECTURES "75;86")
 endif()
