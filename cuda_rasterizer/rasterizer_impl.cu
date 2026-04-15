@@ -17,9 +17,11 @@
 #ifdef USE_ROCM
 #include <hip/hip_runtime.h>
 #include <hipcub/hipcub.hpp>
-#define GLM_FORCE_HIP
+#define GLM_FORCE_CUDA
 #include <glm/glm.hpp>
 #include <hip/hip_cooperative_groups.h>
+#define RASTERIZER_LAUNCH(kernel, grid, block, ...) \
+	hipLaunchKernelGGL(kernel, dim3(grid), dim3(block), 0, 0, __VA_ARGS__)
 #else
 #include <cuda.h>
 #include "cuda_runtime.h"
@@ -30,6 +32,8 @@
 #include <glm/glm.hpp>
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#define RASTERIZER_LAUNCH(kernel, grid, block, ...) \
+	kernel<<<grid, block>>>(__VA_ARGS__)
 #endif
 namespace cg = cooperative_groups;
 
@@ -156,7 +160,7 @@ void CudaRasterizer::Rasterizer::markVisible(
 	float* projmatrix,
 	bool* present)
 {
-	checkFrustum << <(P + 255) / 256, 256 >> > (
+	RASTERIZER_LAUNCH(checkFrustum, (P + 255) / 256, 256,
 		P,
 		means3D,
 		viewmatrix, projmatrix,
@@ -298,7 +302,7 @@ int CudaRasterizer::Rasterizer::forward(
 
 	// For each instance to be rendered, produce adequate [ tile | depth ] key 
 	// and corresponding dublicated Gaussian indices to be sorted
-	duplicateWithKeys << <(P + 255) / 256, 256 >> > (
+	RASTERIZER_LAUNCH(duplicateWithKeys, (P + 255) / 256, 256,
 		P,
 		geomState.means2D,
 		geomState.depths,
@@ -323,7 +327,7 @@ int CudaRasterizer::Rasterizer::forward(
 
 	// Identify start and end of per-tile workloads in sorted list
 	if (num_rendered > 0)
-		identifyTileRanges << <(num_rendered + 255) / 256, 256 >> > (
+		RASTERIZER_LAUNCH(identifyTileRanges, (num_rendered + 255) / 256, 256,
 			num_rendered,
 			binningState.point_list_keys,
 			imgState.ranges);

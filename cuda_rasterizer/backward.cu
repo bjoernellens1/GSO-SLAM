@@ -13,9 +13,13 @@
 #include "auxiliary.h"
 #ifdef USE_ROCM
 #include <hip/hip_cooperative_groups.h>
+#define BACKWARD_LAUNCH(kernel, grid, block, ...) \
+	hipLaunchKernelGGL(kernel, dim3(grid), dim3(block), 0, 0, __VA_ARGS__)
 #else
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#define BACKWARD_LAUNCH(kernel, grid, block, ...) \
+	kernel<<<grid, block>>>(__VA_ARGS__)
 #endif
 namespace cg = cooperative_groups;
 
@@ -26,7 +30,7 @@ __device__ void computeColorFromSH(int idx, int deg, int max_coeffs, const glm::
 	// Compute intermediate values, as it is done during forward
 	glm::vec3 pos = means[idx];
 	glm::vec3 dir_orig = pos - campos;
-	glm::vec3 dir = dir_orig / glm::length(dir_orig);
+	glm::vec3 dir = dir_orig / gso_length(dir_orig);
 
 	glm::vec3* sh = ((glm::vec3*)shs) + idx * max_coeffs;
 
@@ -131,7 +135,7 @@ __device__ void computeColorFromSH(int idx, int deg, int max_coeffs, const glm::
 	// The view direction is an input to the computation. View direction
 	// is influenced by the Gaussian's mean, so SHs gradients
 	// must propagate back into 3D position.
-	glm::vec3 dL_ddir(glm::dot(dRGBdx, dL_dRGB), glm::dot(dRGBdy, dL_dRGB), glm::dot(dRGBdz, dL_dRGB));
+	glm::vec3 dL_ddir(gso_dot(dRGBdx, dL_dRGB), gso_dot(dRGBdy, dL_dRGB), gso_dot(dRGBdz, dL_dRGB));
 
 	// Account for normalization of direction
 	float3 dL_dmean = dnormvdv(float3{ dir_orig.x, dir_orig.y, dir_orig.z }, float3{ dL_ddir.x, dL_ddir.y, dL_ddir.z });
@@ -492,7 +496,7 @@ __device__ void compute_transmat_aabb(
 		R = quat_to_rotmat(rot);
 		S = scale_to_mat(scale, 1.0f);
 		
-		glm::mat3 L = R * S;
+		glm::mat3 L = gso_mul(R, S);
 		glm::mat3x4 M = glm::mat3x4(
 			glm::vec4(L[0], 0.0),
 			glm::vec4(L[1], 0.0),
@@ -512,8 +516,8 @@ __device__ void compute_transmat_aabb(
 			glm::vec4(0.0, 0.0, 0.0, 1.0)
 		);
 
-		P = world2ndc * ndc2pix;
-		T = glm::transpose(M) * P;
+		P = gso_mul(world2ndc, ndc2pix);
+		T = gso_mul(gso_transpose(M), P);
 		normal = transformVec4x3({L[2].x, L[2].y, L[2].z}, viewmatrix);
 	}
 
@@ -527,18 +531,19 @@ __device__ void compute_transmat_aabb(
 	if(dL_dmean2D.x != 0 || dL_dmean2D.y != 0)
 	{
 		glm::vec3 t_vec = glm::vec3(9.0f, 9.0f, -1.0f);
-		float d = glm::dot(t_vec, T[2] * T[2]);
+		float d = gso_dot(t_vec, T[2] * T[2]);
 		glm::vec3 f_vec = t_vec * (1.0f / d);
 		glm::vec3 dL_dT0 = dL_dmean2D.x * f_vec * T[2];
 		glm::vec3 dL_dT1 = dL_dmean2D.y * f_vec * T[2];
 		glm::vec3 dL_dT3 = dL_dmean2D.x * f_vec * T[0] + dL_dmean2D.y * f_vec * T[1];
 		glm::vec3 dL_df = dL_dmean2D.x * T[0] * T[2] + dL_dmean2D.y * T[1] * T[2];
-		float dL_dd = glm::dot(dL_df, f_vec) * (-1.0 / d);
+		float dL_dd = gso_dot(dL_df, f_vec) * (-1.0 / d);
 		glm::vec3 dd_dT3 = t_vec * T[2] * 2.0f;
 		dL_dT3 += dL_dd * dd_dT3;
-		dL_dT[0] += dL_dT0;
-		dL_dT[1] += dL_dT1;
-		dL_dT[2] += dL_dT3;
+		dL_dT = glm::mat3(
+			dL_dT[0] + dL_dT0,
+			dL_dT[1] + dL_dT1,
+			dL_dT[2] + dL_dT3);
 
 		if (Ts_precomp != nullptr) {
 			dL_dTs[idx * 9 + 0] = dL_dT[0].x;
@@ -557,7 +562,7 @@ __device__ void compute_transmat_aabb(
 	if (Ts_precomp != nullptr) return;
 
 	// Update gradients w.r.t. scaling, rotation, position of the Gaussian
-	glm::mat3x4 dL_dM = P * glm::transpose(dL_dT);
+	glm::mat3x4 dL_dM = gso_mul(P, gso_transpose(dL_dT));
 	float3 dL_dtn = transformVec4x3Transpose(dL_dnormals[idx], viewmatrix);
 #if DUAL_VISIABLE
 	float3 p_view = transformPoint4x3(p_orig, viewmatrix);
@@ -578,8 +583,8 @@ __device__ void compute_transmat_aabb(
 	
 	dL_drots[idx] = quat_to_rotmat_vjp(rot, dL_dR);
 	dL_dscales[idx] = glm::vec2(
-		(float)glm::dot(dL_dRS[0], R[0]),
-		(float)glm::dot(dL_dRS[1], R[1])
+		(float)gso_dot(dL_dRS[0], R[0]),
+		(float)gso_dot(dL_dRS[1], R[1])
 	);
 	dL_dmeans[idx] = glm::vec3(dL_dM[2]);
 }
@@ -666,7 +671,7 @@ void BACKWARD::preprocess(
 	glm::vec2* dL_dscales,
 	glm::vec4* dL_drots)
 {	
-	preprocessCUDA<NUM_CHANNELS><< <(P + 255) / 256, 256 >> > (
+	BACKWARD_LAUNCH(preprocessCUDA<NUM_CHANNELS>, (P + 255) / 256, 256,
 		P, D, M,
 		(float3*)means3D,
 		transMats,
@@ -716,7 +721,7 @@ void BACKWARD::render(
 	float* dL_dopacity,
 	float* dL_dcolors)
 {
-	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
+	BACKWARD_LAUNCH(renderCUDA<NUM_CHANNELS>, grid, block,
 		ranges,
 		point_list,
 		W, H,

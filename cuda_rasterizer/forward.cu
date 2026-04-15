@@ -13,9 +13,13 @@
 #include "auxiliary.h"
 #ifdef USE_ROCM
 #include <hip/hip_cooperative_groups.h>
+#define FORWARD_LAUNCH(kernel, grid, block, ...) \
+	hipLaunchKernelGGL(kernel, dim3(grid), dim3(block), 0, 0, __VA_ARGS__)
 #else
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#define FORWARD_LAUNCH(kernel, grid, block, ...) \
+	kernel<<<grid, block>>>(__VA_ARGS__)
 #endif
 namespace cg = cooperative_groups;
 
@@ -28,7 +32,7 @@ __device__ glm::vec3 computeColorFromSH(int idx, int deg, int max_coeffs, const 
 	// Efficient View Synthesis" by Zhang et al. (2022)
 	glm::vec3 pos = means[idx];
 	glm::vec3 dir = pos - campos;
-	dir = dir / glm::length(dir);
+	dir = dir / gso_length(dir);
 
 	glm::vec3* sh = ((glm::vec3*)shs) + idx * max_coeffs;
 	glm::vec3 result = SH_C0 * sh[0];
@@ -71,7 +75,7 @@ __device__ glm::vec3 computeColorFromSH(int idx, int deg, int max_coeffs, const 
 	clamped[3 * idx + 0] = (result.x < 0);
 	clamped[3 * idx + 1] = (result.y < 0);
 	clamped[3 * idx + 2] = (result.z < 0);
-	return glm::max(result, 0.0f);
+	return gso_max(result, 0.0f);
 }
 
 // Compute a 2D-to-2D mapping matrix from a tangent plane into a image plane
@@ -91,7 +95,7 @@ __device__ void compute_transmat(
 
 	glm::mat3 R = quat_to_rotmat(rot);
 	glm::mat3 S = scale_to_mat(scale, mod);
-	glm::mat3 L = R * S;
+	glm::mat3 L = gso_mul(R, S);
 
 	// center of Gaussians in the camera coordinate
 	glm::mat3x4 splat2world = glm::mat3x4(
@@ -113,7 +117,7 @@ __device__ void compute_transmat(
 		glm::vec4(0.0, 0.0, 0.0, 1.0)
 	);
 
-	T = glm::transpose(splat2world) * world2ndc * ndc2pix;
+	T = gso_mul(gso_mul(gso_transpose(splat2world), world2ndc), ndc2pix);
 	normal = transformVec4x3({L[2].x, L[2].y, L[2].z}, viewmatrix);
 
 }
@@ -127,22 +131,22 @@ __device__ bool compute_aabb(
 	float2& extent
 ) {
 	glm::vec3 t = glm::vec3(cutoff * cutoff, cutoff * cutoff, -1.0f);
-	float d = glm::dot(t, T[2] * T[2]);
+	float d = gso_dot(t, T[2] * T[2]);
 	if (d == 0.0) return false;
 	glm::vec3 f = (1 / d) * t;
 
 	glm::vec2 p = glm::vec2(
-		glm::dot(f, T[0] * T[2]),
-		glm::dot(f, T[1] * T[2])
+		gso_dot(f, T[0] * T[2]),
+		gso_dot(f, T[1] * T[2])
 	);
 
 	glm::vec2 h0 = p * p - 
 		glm::vec2(
-			glm::dot(f, T[0] * T[0]),
-			glm::dot(f, T[1] * T[1])
+			gso_dot(f, T[0] * T[0]),
+			gso_dot(f, T[1] * T[1])
 		);
 
-	glm::vec2 h = sqrt(max(glm::vec2(1e-4, 1e-4), h0));
+	glm::vec2 h = gso_sqrt(gso_max(glm::vec2(1e-4f, 1e-4f), h0));
 	point_image = {p.x, p.y};
 	extent = {h.x, h.y};
 	return true;
@@ -471,7 +475,7 @@ void FORWARD::render(
 	float* out_color,
 	float* out_others)
 {
-	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
+	FORWARD_LAUNCH(renderCUDA<NUM_CHANNELS>, grid, block,
 		ranges,
 		point_list,
 		W, H,
@@ -514,7 +518,7 @@ void FORWARD::preprocess(int P, int D, int M,
 	uint32_t* tiles_touched,
 	bool prefiltered)
 {
-	preprocessCUDA<NUM_CHANNELS> << <(P + 255) / 256, 256 >> > (
+	FORWARD_LAUNCH(preprocessCUDA<NUM_CHANNELS>, (P + 255) / 256, 256,
 		P, D, M,
 		means3D,
 		scales,
@@ -539,6 +543,5 @@ void FORWARD::preprocess(int P, int D, int M,
 		normal_opacity,
 		grid,
 		tiles_touched,
-		prefiltered
-		);
+		prefiltered);
 }

@@ -1,0 +1,48 @@
+name: gso-slam-cuda
+
+x-gso-common: &gso-common
+  working_dir: /workspace/GSO-SLAM
+  environment:
+    GSO_ROOT_DIR: /workspace/GSO-SLAM
+    GSO_DATASET_ROOT: /datasets
+    GSO_RESULTS_ROOT: /results
+    GSO_REPLICA_SCENE: ${GSO_REPLICA_SCENE:-room0}
+    GSO_TUM_SCENE: ${GSO_TUM_SCENE:-freiburg1_desk}
+  volumes:
+    - ./dataset:/datasets
+    - ./docker/results:/results
+
+x-gso-gpu: &gso-gpu
+  gpus: all
+
+services:
+  smoke:
+    <<: *gso-common
+    image: ${GSO_CUDA_IMAGE:-ghcr.io/bjoernellens1/gso-slam-cuda:cuda-latest}
+    command: ["bash", "/workspace/GSO-SLAM/docker/compose/image_smoke.sh"]
+
+  preprocess-datasets:
+    <<: *gso-common
+    image: ${GSO_CUDA_IMAGE:-ghcr.io/bjoernellens1/gso-slam-cuda:cuda-latest}
+    command: ["bash", "/workspace/GSO-SLAM/docker/compose/preprocess_datasets.sh"]
+
+  replica-ate:
+    <<: *gso-common
+    image: ${GSO_CUDA_IMAGE:-ghcr.io/bjoernellens1/gso-slam-cuda:cuda-latest}
+    command: ["bash", "/workspace/GSO-SLAM/docker/compose/eval_replica_ate.sh"]
+
+  replica-rendering:
+    <<: *gso-common
+    <<: *gso-gpu
+    image: ${GSO_CUDA_IMAGE:-ghcr.io/bjoernellens1/gso-slam-cuda:cuda-latest}
+    command: ["bash", "/workspace/GSO-SLAM/docker/compose/eval_replica_rendering.sh"]
+
+  replica-depth:
+    <<: *gso-common
+    image: ${GSO_CUDA_IMAGE:-ghcr.io/bjoernellens1/gso-slam-cuda:cuda-latest}
+    command: ["bash", "/workspace/GSO-SLAM/docker/compose/eval_replica_depth.sh"]
+
+  tum-ate:
+    <<: *gso-common
+    image: ${GSO_CUDA_IMAGE:-ghcr.io/bjoernellens1/gso-slam-cuda:cuda-latest}
+    command: ["bash", "/workspace/GSO-SLAM/docker/compose/eval_tum_ate.sh"]

@@ -49,6 +49,18 @@ cd dataset && bash download_tum.sh
 cd ../experiments_bash && bash tum.sh
 ```
 
+### Run from Published Containers
+
+Use the published GHCR images with the repository Compose files:
+
+```bash
+docker compose -f compose.cuda.yml run --rm smoke
+docker compose -f compose.cuda.yml run --rm preprocess-datasets
+docker compose -f compose.cuda.yml run --rm -e GSO_REPLICA_SCENE=room0 replica-ate
+```
+
+For ROCm, switch to `compose.rocm.yml`. See [Container Quickstart](container_quickstart.md) for details and Podman notes.
+
 ---
 
 ## Documentation Sections
@@ -56,6 +68,7 @@ cd ../experiments_bash && bash tum.sh
 | Section | Description |
 |---|---|
 | [Architecture](architecture.md) | System design, component interactions, data flows |
+| [Container Quickstart](container_quickstart.md) | Compose-based GHCR usage for CUDA and ROCm images |
 | [Dependencies](dependencies.md) | All required and optional libraries with version notes |
 | [Python Wrapping](python_wrapping.md) | How to expose the C++ API to Python via pybind11 |
 | [ROCm Port](rocm_port.md) | Step-by-step AMD GPU porting guide |

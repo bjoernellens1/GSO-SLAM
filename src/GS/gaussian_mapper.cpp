@@ -1506,8 +1506,10 @@ void GaussianMapper::increasePcdByKeyframeInactiveGeoDensify(
             depth_cache_colors_ = colors_valid;
         }
         else {
-            depth_cache_points_ = torch::cat({depth_cache_points_, points3D_valid}, /*dim=*/0);
-            depth_cache_colors_ = torch::cat({depth_cache_colors_, colors_valid}, /*dim=*/0);
+            depth_cache_points_ = torch::cat(
+                std::vector<torch::Tensor>{depth_cache_points_, points3D_valid}, /*dim=*/0);
+            depth_cache_colors_ = torch::cat(
+                std::vector<torch::Tensor>{depth_cache_colors_, colors_valid}, /*dim=*/0);
         }
 // savePly(result_dir_ / (std::to_string(getIteration()) + "_" + std::to_string(pkf->fid_) + "_1_after_inactive_geo_densify"));
     }
@@ -1611,8 +1613,10 @@ void GaussianMapper::increasePcdByKeyframeInactiveGeoDensify(
             depth_cache_colors_ = colors_valid;
         }
         else {
-            depth_cache_points_ = torch::cat({depth_cache_points_, points3D_valid}, /*dim=*/0);
-            depth_cache_colors_ = torch::cat({depth_cache_colors_, colors_valid}, /*dim=*/0);
+            depth_cache_points_ = torch::cat(
+                std::vector<torch::Tensor>{depth_cache_points_, points3D_valid}, /*dim=*/0);
+            depth_cache_colors_ = torch::cat(
+                std::vector<torch::Tensor>{depth_cache_colors_, colors_valid}, /*dim=*/0);
         }
 // savePly(result_dir_ / (std::to_string(getIteration()) + "_" + std::to_string(pkf->fid_) + "_1_after_inactive_geo_densify"));
     }
@@ -1692,8 +1696,10 @@ void GaussianMapper::increasePcdByKeyframeInactiveGeoDensify(
             depth_cache_colors_ = colors_valid;
         }
         else {
-            depth_cache_points_ = torch::cat({depth_cache_points_, points3D_valid}, /*dim=*/0);
-            depth_cache_colors_ = torch::cat({depth_cache_colors_, colors_valid}, /*dim=*/0);
+            depth_cache_points_ = torch::cat(
+                std::vector<torch::Tensor>{depth_cache_points_, points3D_valid}, /*dim=*/0);
+            depth_cache_colors_ = torch::cat(
+                std::vector<torch::Tensor>{depth_cache_colors_, colors_valid}, /*dim=*/0);
         }
 // savePly(result_dir_ / (std::to_string(getIteration()) + "_" + std::to_string(pkf->fid_) + "_1_after_inactive_geo_densify"));
     }

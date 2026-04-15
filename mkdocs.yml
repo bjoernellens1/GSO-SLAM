@@ -55,6 +55,7 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Container Quickstart: container_quickstart.md
   - Architecture: architecture.md
   - Dependencies: dependencies.md
   - Extensions:

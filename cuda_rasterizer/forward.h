@@ -14,7 +14,7 @@
 
 #ifdef USE_ROCM
 #include <hip/hip_runtime.h>
-#define GLM_FORCE_HIP
+#define GLM_FORCE_CUDA
 #else
 #include <cuda.h>
 #include "cuda_runtime.h"

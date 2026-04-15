@@ -71,6 +71,143 @@ __device__ const float SH_C3[] = {
 #define GSO_DEVICE_TRAP() __trap()
 #endif
 
+__forceinline__ __device__ float gso_dot(const glm::vec3& a, const glm::vec3& b)
+{
+	return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+__forceinline__ __device__ float gso_length(const glm::vec3& v)
+{
+	return sqrtf(gso_dot(v, v));
+}
+
+__forceinline__ __device__ glm::vec2 gso_max(const glm::vec2& a, const glm::vec2& b)
+{
+	return glm::vec2(max(a.x, b.x), max(a.y, b.y));
+}
+
+__forceinline__ __device__ glm::vec2 gso_sqrt(const glm::vec2& v)
+{
+	return glm::vec2(sqrtf(v.x), sqrtf(v.y));
+}
+
+__forceinline__ __device__ glm::vec3 gso_max(const glm::vec3& v, float min_value)
+{
+	return glm::vec3(max(v.x, min_value), max(v.y, min_value), max(v.z, min_value));
+}
+
+__forceinline__ __device__ glm::mat3 gso_transpose(const glm::mat3& m)
+{
+	return glm::mat3(
+		glm::vec3(m[0][0], m[1][0], m[2][0]),
+		glm::vec3(m[0][1], m[1][1], m[2][1]),
+		glm::vec3(m[0][2], m[1][2], m[2][2]));
+}
+
+__forceinline__ __device__ glm::mat4x3 gso_transpose(const glm::mat3x4& m)
+{
+	return glm::mat4x3(
+		glm::vec3(m[0][0], m[1][0], m[2][0]),
+		glm::vec3(m[0][1], m[1][1], m[2][1]),
+		glm::vec3(m[0][2], m[1][2], m[2][2]),
+		glm::vec3(m[0][3], m[1][3], m[2][3]));
+}
+
+__forceinline__ __device__ glm::mat3 gso_mul(const glm::mat3& lhs, const glm::mat3& rhs)
+{
+	return glm::mat3(
+		glm::vec3(
+			lhs[0][0] * rhs[0][0] + lhs[1][0] * rhs[0][1] + lhs[2][0] * rhs[0][2],
+			lhs[0][1] * rhs[0][0] + lhs[1][1] * rhs[0][1] + lhs[2][1] * rhs[0][2],
+			lhs[0][2] * rhs[0][0] + lhs[1][2] * rhs[0][1] + lhs[2][2] * rhs[0][2]),
+		glm::vec3(
+			lhs[0][0] * rhs[1][0] + lhs[1][0] * rhs[1][1] + lhs[2][0] * rhs[1][2],
+			lhs[0][1] * rhs[1][0] + lhs[1][1] * rhs[1][1] + lhs[2][1] * rhs[1][2],
+			lhs[0][2] * rhs[1][0] + lhs[1][2] * rhs[1][1] + lhs[2][2] * rhs[1][2]),
+		glm::vec3(
+			lhs[0][0] * rhs[2][0] + lhs[1][0] * rhs[2][1] + lhs[2][0] * rhs[2][2],
+			lhs[0][1] * rhs[2][0] + lhs[1][1] * rhs[2][1] + lhs[2][1] * rhs[2][2],
+			lhs[0][2] * rhs[2][0] + lhs[1][2] * rhs[2][1] + lhs[2][2] * rhs[2][2]));
+}
+
+__forceinline__ __device__ glm::mat3x4 gso_mul(const glm::mat4& lhs, const glm::mat3x4& rhs)
+{
+	return glm::mat3x4(
+		glm::vec4(
+			lhs[0][0] * rhs[0][0] + lhs[1][0] * rhs[0][1] + lhs[2][0] * rhs[0][2] + lhs[3][0] * rhs[0][3],
+			lhs[0][1] * rhs[0][0] + lhs[1][1] * rhs[0][1] + lhs[2][1] * rhs[0][2] + lhs[3][1] * rhs[0][3],
+			lhs[0][2] * rhs[0][0] + lhs[1][2] * rhs[0][1] + lhs[2][2] * rhs[0][2] + lhs[3][2] * rhs[0][3],
+			lhs[0][3] * rhs[0][0] + lhs[1][3] * rhs[0][1] + lhs[2][3] * rhs[0][2] + lhs[3][3] * rhs[0][3]),
+		glm::vec4(
+			lhs[0][0] * rhs[1][0] + lhs[1][0] * rhs[1][1] + lhs[2][0] * rhs[1][2] + lhs[3][0] * rhs[1][3],
+			lhs[0][1] * rhs[1][0] + lhs[1][1] * rhs[1][1] + lhs[2][1] * rhs[1][2] + lhs[3][1] * rhs[1][3],
+			lhs[0][2] * rhs[1][0] + lhs[1][2] * rhs[1][1] + lhs[2][2] * rhs[1][2] + lhs[3][2] * rhs[1][3],
+			lhs[0][3] * rhs[1][0] + lhs[1][3] * rhs[1][1] + lhs[2][3] * rhs[1][2] + lhs[3][3] * rhs[1][3]),
+		glm::vec4(
+			lhs[0][0] * rhs[2][0] + lhs[1][0] * rhs[2][1] + lhs[2][0] * rhs[2][2] + lhs[3][0] * rhs[2][3],
+			lhs[0][1] * rhs[2][0] + lhs[1][1] * rhs[2][1] + lhs[2][1] * rhs[2][2] + lhs[3][1] * rhs[2][3],
+			lhs[0][2] * rhs[2][0] + lhs[1][2] * rhs[2][1] + lhs[2][2] * rhs[2][2] + lhs[3][2] * rhs[2][3],
+			lhs[0][3] * rhs[2][0] + lhs[1][3] * rhs[2][1] + lhs[2][3] * rhs[2][2] + lhs[3][3] * rhs[2][3]));
+}
+
+__forceinline__ __device__ glm::mat4x3 gso_mul(const glm::mat4x3& lhs, const glm::mat4& rhs)
+{
+	return glm::mat4x3(
+		glm::vec3(
+			lhs[0][0] * rhs[0][0] + lhs[1][0] * rhs[0][1] + lhs[2][0] * rhs[0][2] + lhs[3][0] * rhs[0][3],
+			lhs[0][1] * rhs[0][0] + lhs[1][1] * rhs[0][1] + lhs[2][1] * rhs[0][2] + lhs[3][1] * rhs[0][3],
+			lhs[0][2] * rhs[0][0] + lhs[1][2] * rhs[0][1] + lhs[2][2] * rhs[0][2] + lhs[3][2] * rhs[0][3]),
+		glm::vec3(
+			lhs[0][0] * rhs[1][0] + lhs[1][0] * rhs[1][1] + lhs[2][0] * rhs[1][2] + lhs[3][0] * rhs[1][3],
+			lhs[0][1] * rhs[1][0] + lhs[1][1] * rhs[1][1] + lhs[2][1] * rhs[1][2] + lhs[3][1] * rhs[1][3],
+			lhs[0][2] * rhs[1][0] + lhs[1][2] * rhs[1][1] + lhs[2][2] * rhs[1][2] + lhs[3][2] * rhs[1][3]),
+		glm::vec3(
+			lhs[0][0] * rhs[2][0] + lhs[1][0] * rhs[2][1] + lhs[2][0] * rhs[2][2] + lhs[3][0] * rhs[2][3],
+			lhs[0][1] * rhs[2][0] + lhs[1][1] * rhs[2][1] + lhs[2][1] * rhs[2][2] + lhs[3][1] * rhs[2][3],
+			lhs[0][2] * rhs[2][0] + lhs[1][2] * rhs[2][1] + lhs[2][2] * rhs[2][2] + lhs[3][2] * rhs[2][3]),
+		glm::vec3(
+			lhs[0][0] * rhs[3][0] + lhs[1][0] * rhs[3][1] + lhs[2][0] * rhs[3][2] + lhs[3][0] * rhs[3][3],
+			lhs[0][1] * rhs[3][0] + lhs[1][1] * rhs[3][1] + lhs[2][1] * rhs[3][2] + lhs[3][1] * rhs[3][3],
+			lhs[0][2] * rhs[3][0] + lhs[1][2] * rhs[3][1] + lhs[2][2] * rhs[3][2] + lhs[3][2] * rhs[3][3]));
+}
+
+__forceinline__ __device__ glm::mat3 gso_mul(const glm::mat4x3& lhs, const glm::mat3x4& rhs)
+{
+	return glm::mat3(
+		glm::vec3(
+			lhs[0][0] * rhs[0][0] + lhs[1][0] * rhs[0][1] + lhs[2][0] * rhs[0][2] + lhs[3][0] * rhs[0][3],
+			lhs[0][1] * rhs[0][0] + lhs[1][1] * rhs[0][1] + lhs[2][1] * rhs[0][2] + lhs[3][1] * rhs[0][3],
+			lhs[0][2] * rhs[0][0] + lhs[1][2] * rhs[0][1] + lhs[2][2] * rhs[0][2] + lhs[3][2] * rhs[0][3]),
+		glm::vec3(
+			lhs[0][0] * rhs[1][0] + lhs[1][0] * rhs[1][1] + lhs[2][0] * rhs[1][2] + lhs[3][0] * rhs[1][3],
+			lhs[0][1] * rhs[1][0] + lhs[1][1] * rhs[1][1] + lhs[2][1] * rhs[1][2] + lhs[3][1] * rhs[1][3],
+			lhs[0][2] * rhs[1][0] + lhs[1][2] * rhs[1][1] + lhs[2][2] * rhs[1][2] + lhs[3][2] * rhs[1][3]),
+		glm::vec3(
+			lhs[0][0] * rhs[2][0] + lhs[1][0] * rhs[2][1] + lhs[2][0] * rhs[2][2] + lhs[3][0] * rhs[2][3],
+			lhs[0][1] * rhs[2][0] + lhs[1][1] * rhs[2][1] + lhs[2][1] * rhs[2][2] + lhs[3][1] * rhs[2][3],
+			lhs[0][2] * rhs[2][0] + lhs[1][2] * rhs[2][1] + lhs[2][2] * rhs[2][2] + lhs[3][2] * rhs[2][3]));
+}
+
+__forceinline__ __device__ glm::mat3x4 gso_mul(const glm::mat3x4& lhs, const glm::mat3& rhs)
+{
+	return glm::mat3x4(
+		glm::vec4(
+			lhs[0][0] * rhs[0][0] + lhs[1][0] * rhs[0][1] + lhs[2][0] * rhs[0][2],
+			lhs[0][1] * rhs[0][0] + lhs[1][1] * rhs[0][1] + lhs[2][1] * rhs[0][2],
+			lhs[0][2] * rhs[0][0] + lhs[1][2] * rhs[0][1] + lhs[2][2] * rhs[0][2],
+			lhs[0][3] * rhs[0][0] + lhs[1][3] * rhs[0][1] + lhs[2][3] * rhs[0][2]),
+		glm::vec4(
+			lhs[0][0] * rhs[1][0] + lhs[1][0] * rhs[1][1] + lhs[2][0] * rhs[1][2],
+			lhs[0][1] * rhs[1][0] + lhs[1][1] * rhs[1][1] + lhs[2][1] * rhs[1][2],
+			lhs[0][2] * rhs[1][0] + lhs[1][2] * rhs[1][1] + lhs[2][2] * rhs[1][2],
+			lhs[0][3] * rhs[1][0] + lhs[1][3] * rhs[1][1] + lhs[2][3] * rhs[1][2]),
+		glm::vec4(
+			lhs[0][0] * rhs[2][0] + lhs[1][0] * rhs[2][1] + lhs[2][0] * rhs[2][2],
+			lhs[0][1] * rhs[2][0] + lhs[1][1] * rhs[2][1] + lhs[2][1] * rhs[2][2],
+			lhs[0][2] * rhs[2][0] + lhs[1][2] * rhs[2][1] + lhs[2][2] * rhs[2][2],
+			lhs[0][3] * rhs[2][0] + lhs[1][3] * rhs[2][1] + lhs[2][3] * rhs[2][2]));
+}
+
 __forceinline__ __device__ float ndc2Pix(float v, int S)
 {
 	return ((v + 1.0) * S - 1.0) * 0.5;

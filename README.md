@@ -63,6 +63,17 @@ bash replica_eval_rendering.sh
 bash replica_eval_depth.sh
 ```
 
+## Container Quickstart
+Published GHCR images can be exercised with the Compose files in the repo:
+
+```bash
+docker compose -f compose.cuda.yml run --rm smoke
+docker compose -f compose.cuda.yml run --rm preprocess-datasets
+docker compose -f compose.cuda.yml run --rm -e GSO_REPLICA_SCENE=room0 replica-ate
+```
+
+For AMD GPUs, use `compose.rocm.yml`. Those services pass `/dev/kfd` and `/dev/dri` through for ROCm and are compatible with Podman's standard device mapping approach. Full details are in [`docs/container_quickstart.md`](docs/container_quickstart.md).
+
 ## Documentation
 
 Full documentation is in the [`docs/`](docs/) directory.

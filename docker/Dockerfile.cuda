@@ -27,7 +27,7 @@
 # --------------------------------------------------------------------------
 # Stage 1 – deps: PyTorch base + system libraries
 # --------------------------------------------------------------------------
-FROM pytorch/pytorch:2.4.1-cuda12.4-cudnn9-devel AS deps
+FROM docker.io/pytorch/pytorch:2.4.1-cuda12.4-cudnn9-devel AS deps
 
 ENV DEBIAN_FRONTEND=noninteractive
 

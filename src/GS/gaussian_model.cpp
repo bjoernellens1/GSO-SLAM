@@ -15,6 +15,9 @@
 
 #include "include/gaussian_model.h"
 
+#include <cstdint>
+#include <string>
+
 GaussianModel::GaussianModel(const int sh_degree)
     : active_sh_degree_(0), spatial_lr_scale_(0.0),
       lr_delay_steps_(0), lr_delay_mult_(1.0), max_steps_(1000000)
@@ -62,7 +65,8 @@ torch::Tensor GaussianModel::getXYZ()
 
 torch::Tensor GaussianModel::getFeatures()
 {
-    return torch::cat({this->features_dc_.clone(), this->features_rest_.clone()}, /*dim=*/1);
+    return torch::cat(
+        std::vector<torch::Tensor>{this->features_dc_.clone(), this->features_rest_.clone()}, /*dim=*/1);
 }
 
 torch::Tensor GaussianModel::getOpacityActivation()
@@ -384,8 +388,10 @@ void GaussianModel::increasePcd(std::vector<float> points, std::vector<float> co
         sparse_points_color_ = new_colors;
     }
     else {
-        sparse_points_xyz_ = torch::cat({sparse_points_xyz_, new_point_cloud}, /*dim=*/0);
-        sparse_points_color_ = torch::cat({sparse_points_color_, new_colors}, /*dim=*/0);
+        sparse_points_xyz_ = torch::cat(
+            std::vector<torch::Tensor>{sparse_points_xyz_, new_point_cloud}, /*dim=*/0);
+        sparse_points_color_ = torch::cat(
+            std::vector<torch::Tensor>{sparse_points_color_, new_colors}, /*dim=*/0);
     }
 
     torch::Tensor new_fused_colors = sh_utils::RGB2SH(new_colors);
@@ -495,8 +501,10 @@ void GaussianModel::increasePcd(std::vector<float> points, std::vector<float> co
         sparse_points_color_ = new_colors;
     }
     else {
-        sparse_points_xyz_ = torch::cat({sparse_points_xyz_, new_point_cloud}, /*dim=*/0);
-        sparse_points_color_ = torch::cat({sparse_points_color_, new_colors}, /*dim=*/0);
+        sparse_points_xyz_ = torch::cat(
+            std::vector<torch::Tensor>{sparse_points_xyz_, new_point_cloud}, /*dim=*/0);
+        sparse_points_color_ = torch::cat(
+            std::vector<torch::Tensor>{sparse_points_color_, new_colors}, /*dim=*/0);
     }
 
     torch::Tensor new_fused_colors = sh_utils::RGB2SH(new_colors);
@@ -609,8 +617,10 @@ void GaussianModel::increasePcd(torch::Tensor& new_point_cloud, torch::Tensor& n
         sparse_points_color_ = new_colors;
     }
     else {
-        sparse_points_xyz_ = torch::cat({sparse_points_xyz_, new_point_cloud}, /*dim=*/0);
-        sparse_points_color_ = torch::cat({sparse_points_color_, new_colors}, /*dim=*/0);
+        sparse_points_xyz_ = torch::cat(
+            std::vector<torch::Tensor>{sparse_points_xyz_, new_point_cloud}, /*dim=*/0);
+        sparse_points_color_ = torch::cat(
+            std::vector<torch::Tensor>{sparse_points_color_, new_colors}, /*dim=*/0);
     }
 
     torch::Tensor new_fused_colors = sh_utils::RGB2SH(new_colors);
@@ -862,6 +872,14 @@ void GaussianModel::setRotationLearningRate(float rot_lr)
     optimizer_->param_groups()[5].options().set_lr(rot_lr);
 }
 
+namespace {
+std::string tensor_state_key(const torch::Tensor& tensor)
+{
+    auto* impl = tensor.unsafeGetTensorImpl();
+    return std::to_string(reinterpret_cast<std::uintptr_t>(impl));
+}
+}  // namespace
+
 void GaussianModel::resetOpacity()
 {
     torch::Tensor opacities_new = general_utils::inverse_sigmoid(
@@ -877,7 +895,7 @@ torch::Tensor GaussianModel::replaceTensorToOptimizer(torch::Tensor& tensor, int
 {
     auto& param = this->optimizer_->param_groups()[tensor_idx].params()[0];
     auto& state = optimizer_->state();
-    auto key = c10::guts::to_string(param.unsafeGetTensorImpl());
+    auto key = tensor_state_key(param);
     auto& stored_state = static_cast<torch::optim::AdamParamState&>(*state[key]);
     auto new_state = std::make_unique<torch::optim::AdamParamState>();
     new_state->step(stored_state.step());
@@ -887,7 +905,7 @@ torch::Tensor GaussianModel::replaceTensorToOptimizer(torch::Tensor& tensor, int
 
     state.erase(key);
     param = tensor.requires_grad_();
-    key = c10::guts::to_string(param.unsafeGetTensorImpl());
+    key = tensor_state_key(param);
     state[key] = std::move(new_state);
 
     auto optimizable_tensors = param;
@@ -904,7 +922,7 @@ void GaussianModel::prunePoints(torch::Tensor& mask)
     auto& state = this->optimizer_->state();
     for (int group_idx = 0; group_idx < 6; ++group_idx) {
         auto& param = param_groups[group_idx].params()[0];
-        auto key = c10::guts::to_string(param.unsafeGetTensorImpl());
+        auto key = tensor_state_key(param);
         if (state.find(key) != state.end()) {
             auto& stored_state = static_cast<torch::optim::AdamParamState&>(*state[key]);
             auto new_state = std::make_unique<torch::optim::AdamParamState>();
@@ -915,7 +933,7 @@ void GaussianModel::prunePoints(torch::Tensor& mask)
 
             state.erase(key);
             param = param.index({valid_points_mask}).requires_grad_();
-            key = c10::guts::to_string(param.unsafeGetTensorImpl());
+            key = tensor_state_key(param);
             state[key] = std::move(new_state);
             optimizable_tensors[group_idx] = param;
         }
@@ -976,24 +994,28 @@ void GaussianModel::densificationPostfix(
         assert(group.params().size() == 1);
         auto& extension_tensor = tensors_dict[group_idx];
         auto& param = group.params()[0];
-        auto key = c10::guts::to_string(param.unsafeGetTensorImpl());
+        auto key = tensor_state_key(param);
         if (state.find(key) != state.end()) {
             auto& stored_state = static_cast<torch::optim::AdamParamState&>(*state[key]);
             auto new_state = std::make_unique<torch::optim::AdamParamState>();
             new_state->step(stored_state.step());
-            new_state->exp_avg(torch::cat({stored_state.exp_avg().clone(), torch::zeros_like(extension_tensor)}, /*dim=*/0));
-            new_state->exp_avg_sq(torch::cat({stored_state.exp_avg_sq().clone(), torch::zeros_like(extension_tensor)}, /*dim=*/0));
+            new_state->exp_avg(torch::cat(std::vector<torch::Tensor>{
+                stored_state.exp_avg().clone(),
+                torch::zeros_like(extension_tensor)}, /*dim=*/0));
+            new_state->exp_avg_sq(torch::cat(std::vector<torch::Tensor>{
+                stored_state.exp_avg_sq().clone(),
+                torch::zeros_like(extension_tensor)}, /*dim=*/0));
             // new_state->max_exp_avg_sq(stored_state.max_exp_avg_sq().clone());  // needed only when options.amsgrad(true), which is false by default
 
             state.erase(key);
-            param = torch::cat({param, extension_tensor}, /*dim=*/0).requires_grad_();
-            key = c10::guts::to_string(param.unsafeGetTensorImpl());
+            param = torch::cat(std::vector<torch::Tensor>{param, extension_tensor}, /*dim=*/0).requires_grad_();
+            key = tensor_state_key(param);
             state[key] = std::move(new_state);
 
             optimizable_tensors[group_idx] = param;
         }
         else {
-            param = torch::cat({param, extension_tensor}, /*dim=*/0).requires_grad_();
+            param = torch::cat(std::vector<torch::Tensor>{param, extension_tensor}, /*dim=*/0).requires_grad_();
             optimizable_tensors[group_idx] = param;
         }
     }
@@ -1015,7 +1037,8 @@ void GaussianModel::densificationPostfix(
 
     GAUSSIAN_MODEL_TENSORS_TO_VEC
 
-    this->exist_since_iter_ = torch::cat({this->exist_since_iter_, new_exist_since_iter}, /*dim=*/0);
+    this->exist_since_iter_ = torch::cat(
+        std::vector<torch::Tensor>{this->exist_since_iter_, new_exist_since_iter}, /*dim=*/0);
 
     this->xyz_gradient_accum_ = torch::zeros({this->getXYZ().size(0), 1}, torch::TensorOptions().device(device_type_));
     this->denom_ = torch::zeros({this->getXYZ().size(0), 1}, torch::TensorOptions().device(device_type_));
@@ -1039,7 +1062,12 @@ void GaussianModel::densifyAndSplit(
     );
 
     auto stds = this->getScalingActivation().index({selected_pts_mask}).repeat({N, 1});
-    stds = torch::cat({stds, 0 * torch::ones({stds.size(0),1}, torch::TensorOptions().device(device_type_))}, /*dim*/-1);
+    stds = torch::cat(
+        std::vector<torch::Tensor>{
+            stds,
+            0 * torch::ones({stds.size(0),1}, torch::TensorOptions().device(device_type_))
+        },
+        /*dim*/-1);
     auto means = torch::zeros({stds.size(0), 3}, torch::TensorOptions().device(device_type_));
     auto samples = at::normal(means, stds);
     auto r_masked = this->rotation_.index({selected_pts_mask});

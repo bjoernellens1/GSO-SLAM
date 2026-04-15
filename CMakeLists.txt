@@ -4,6 +4,15 @@ CMAKE_MINIMUM_REQUIRED(VERSION 3.22 FATAL_ERROR)
 
 option(USE_ROCM "Build with AMD ROCm/HIP instead of NVIDIA CUDA" OFF)
 
+if(USE_ROCM AND NOT DEFINED CMAKE_CXX_COMPILER)
+    find_program(GSO_ROCM_CLANGXX
+        NAMES amdclang++ clang++
+        HINTS /opt/rocm/bin /opt/rocm/llvm/bin /opt/rocm-7.2.1/bin /opt/rocm-7.2.1/lib/llvm/bin)
+    if(GSO_ROCM_CLANGXX)
+        set(CMAKE_CXX_COMPILER "${GSO_ROCM_CLANGXX}" CACHE FILEPATH "ROCm host C++ compiler" FORCE)
+    endif()
+endif()
+
 if(USE_ROCM)
     PROJECT(${PROJECT_NAME} LANGUAGES CXX HIP C)
 else()
@@ -30,7 +39,37 @@ set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 # required libraries
 # set(PYTHON_EXECUTABLE "/usr/bin/python3")
 find_package(Torch REQUIRED)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS} -pthread")
+if(USE_ROCM)
+    string(REGEX REPLACE "--offload-arch=[^ ]+" "" GSO_TORCH_CXX_FLAGS "${TORCH_CXX_FLAGS}")
+else()
+    set(GSO_TORCH_CXX_FLAGS "${TORCH_CXX_FLAGS}")
+endif()
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${GSO_TORCH_CXX_FLAGS} -pthread")
+include_directories(${TORCH_INCLUDE_DIRS})
+set(GSO_TORCH_LINK_LIBRARIES "")
+foreach(torch_lib IN LISTS TORCH_LIBRARIES)
+    list(APPEND GSO_TORCH_LINK_LIBRARIES "$<LINK_ONLY:${torch_lib}>")
+endforeach()
+if(USE_ROCM)
+    foreach(torch_lib IN LISTS TORCH_LIBRARIES)
+        if(TARGET ${torch_lib})
+            get_target_property(GSO_TORCH_INTERFACE_COMPILE_OPTIONS ${torch_lib} INTERFACE_COMPILE_OPTIONS)
+            if(GSO_TORCH_INTERFACE_COMPILE_OPTIONS)
+                set(GSO_SANITIZED_TORCH_INTERFACE_COMPILE_OPTIONS "")
+                foreach(torch_opt IN LISTS GSO_TORCH_INTERFACE_COMPILE_OPTIONS)
+                    if(NOT torch_opt MATCHES "--offload-arch=.*")
+                        list(APPEND GSO_SANITIZED_TORCH_INTERFACE_COMPILE_OPTIONS "${torch_opt}")
+                    endif()
+                endforeach()
+                set_property(TARGET ${torch_lib} PROPERTY
+                    INTERFACE_COMPILE_OPTIONS "${GSO_SANITIZED_TORCH_INTERFACE_COMPILE_OPTIONS}")
+            endif()
+        endif()
+    endforeach()
+    set(GSO_TORCH_TARGET_LIBRARIES ${GSO_TORCH_LINK_LIBRARIES})
+else()
+    set(GSO_TORCH_TARGET_LIBRARIES ${TORCH_LIBRARIES})
+endif()
 find_package(SuiteParse REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(Boost COMPONENTS system thread) 
@@ -161,10 +200,12 @@ if(USE_ROCM)
         thirdparty/simple-knn/spatial.cu
         PROPERTIES LANGUAGE HIP
     )
+    set_target_properties(simple_knn PROPERTIES
+        HIP_ARCHITECTURES "gfx906;gfx908;gfx1030;gfx1100")
 endif()
 # target_compile_features(simple_knn PUBLIC cxx_std_17)
 if(USE_ROCM)
-    target_link_libraries(simple_knn "${TORCH_LIBRARIES}" hip::hipcub)
+    target_link_libraries(simple_knn ${GSO_TORCH_TARGET_LIBRARIES} hip::hipcub)
 else()
     target_link_libraries(simple_knn "${TORCH_LIBRARIES}")
 endif()
@@ -207,7 +248,7 @@ endif()
 if(USE_ROCM)
     target_link_libraries(cuda_rasterizer
         glm::glm
-        ${TORCH_LIBRARIES}
+        ${GSO_TORCH_TARGET_LIBRARIES}
         hip::hipcub
     )
 else()
@@ -280,10 +321,14 @@ target_link_libraries(gaussian_mapper
     # ${ORB_SLAM3_SOURCE_DIR}/lib/libORB_SLAM3.so
     ${OpenCV_LIBRARIES}
     jsoncpp_lib
-    ${TORCH_LIBRARIES}
+    ${GSO_TORCH_TARGET_LIBRARIES}
     # Eigen3::Eigen
-    simple_knn
-    cuda_rasterizer)
+    $<TARGET_FILE:simple_knn>
+    $<TARGET_FILE:cuda_rasterizer>)
+if(USE_ROCM)
+    add_dependencies(gaussian_mapper simple_knn cuda_rasterizer)
+    set_property(TARGET gaussian_mapper APPEND_STRING PROPERTY COMPILE_FLAGS " -x c++")
+endif()
 
 ##################################################################################
 ##  Build the viewer library to ${PROJECT_SOURCE_DIR}/lib
@@ -298,19 +343,27 @@ add_library(gaussian_viewer SHARED
     )
 target_link_libraries(gaussian_viewer
     # ${ORB_SLAM3_SOURCE_DIR}/lib/libORB_SLAM3.so
-    gaussian_mapper
+    $<LINK_ONLY:gaussian_mapper>
     imgui
     ${OpenCV_LIBRARIES}
     jsoncpp_lib
-    ${TORCH_LIBRARIES}
+    ${GSO_TORCH_TARGET_LIBRARIES}
     glm::glm
     glfw
     OpenGL::GL)
+if(USE_ROCM)
+    set_property(TARGET gaussian_viewer APPEND_STRING PROPERTY COMPILE_FLAGS " -x c++")
+endif()
 
 # compile main library.
 include_directories( ${CSPARSE_INCLUDE_DIR} ${CHOLMOD_INCLUDE_DIR}) 
 add_library(dso ${dso_SOURCE_FILES} ${dso_opencv_SOURCE_FILES} ${dso_pangolin_SOURCE_FILES})
-target_link_libraries(dso ${TORCH_LIBRARIES})
+if(USE_ROCM)
+    target_link_libraries(dso ${GSO_TORCH_TARGET_LIBRARIES})
+    set_property(TARGET dso APPEND_STRING PROPERTY COMPILE_FLAGS " -x c++")
+else()
+    target_link_libraries(dso ${TORCH_LIBRARIES})
+endif()
 
 #set_property( TARGET dso APPEND_STRING PROPERTY COMPILE_FLAGS -Wall )
 #set_property(TARGET dso PROPERTY CXX_STANDARD 17)
@@ -326,7 +379,10 @@ if (OpenCV_FOUND AND Pangolin_FOUND)
 	message("--- compiling dso_dataset.")
 	add_executable(dso_dataset ${PROJECT_SOURCE_DIR}/src/main_dso_pangolin.cpp )
     target_link_libraries(dso_dataset PRIVATE dso boost_system cxsparse ${BOOST_THREAD_LIBRARY} ${LIBZIP_LIBRARY} ${Pangolin_LIBRARIES} ${OpenCV_LIBS} 
-                            ${TORCH_LIBRARIES} gaussian_mapper rerun_sdk gaussian_viewer)
+                            ${GSO_TORCH_TARGET_LIBRARIES} $<LINK_ONLY:gaussian_mapper> rerun_sdk $<LINK_ONLY:gaussian_viewer>)
+    if(USE_ROCM)
+        set_property(TARGET dso_dataset APPEND_STRING PROPERTY COMPILE_FLAGS " -x c++")
+    endif()
 
 else()
 	message("--- not building dso_dataset, since either don't have openCV or Pangolin.")
