@@ -74,6 +74,8 @@ docker compose -f compose.cuda.yml run --rm -e GSO_REPLICA_SCENE=room0 replica-a
 
 For AMD GPUs, use `compose.rocm.yml`. Those services pass `/dev/kfd` and `/dev/dri` through for ROCm and are compatible with Podman's standard device mapping approach. Full details are in [`docs/container_quickstart.md`](docs/container_quickstart.md).
 
+For a GUI run with persisted output, build the local ROCm image and use `bash docker/run_rocm_gui_tum.sh`. It writes to `docker/results/tum_gui_test/` on the host instead of a container-local `/tmp` path.
+
 ## Documentation
 
 Full documentation is in the [`docs/`](docs/) directory.

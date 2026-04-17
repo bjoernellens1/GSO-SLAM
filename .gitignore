@@ -9,6 +9,11 @@ build-*
 *.so.*
 result.txt
 experiments_bash/results
+docker/results/
+dataset/data/Replica/
+dataset/data/TUM/
+dataset/Replica/
+dataset/TUM/
 imgui.ini
 site/
 docs/api/html/
