@@ -74,7 +74,76 @@ docker compose -f compose.cuda.yml run --rm -e GSO_REPLICA_SCENE=room0 replica-a
 
 For AMD GPUs, use `compose.rocm.yml`. Those services pass `/dev/kfd` and `/dev/dri` through for ROCm and are compatible with Podman's standard device mapping approach. Full details are in [`docs/container_quickstart.md`](docs/container_quickstart.md).
 
-For a GUI run with persisted output, build the local ROCm image and use `bash docker/run_rocm_gui_tum.sh`. It writes to `docker/results/tum_gui_test/` on the host instead of a container-local `/tmp` path.
+For a GUI run with persisted output under Podman, build the local ROCm image first:
+
+```bash
+podman build --target builder -f docker/Dockerfile.rocm -t gso-slam:rocm .
+```
+
+Then allow local X11 access and run one of the following commands. Each writes to `docker/results/...` on the host instead of a container-local `/tmp` path.
+
+TUM GUI example:
+
+```bash
+xhost +local:$(whoami)
+podman run --rm -it \
+  --network=host \
+  --device /dev/kfd:/dev/kfd \
+  --device /dev/dri:/dev/dri \
+  --group-add video \
+  --group-add render \
+  --security-opt seccomp=unconfined \
+  --cap-add=SYS_PTRACE \
+  --ipc=host \
+  -e DISPLAY="$DISPLAY" \
+  -e XAUTHORITY=/tmp/.Xauthority \
+  -e GSO_ROOT_DIR=/workspace/GSO-SLAM \
+  -e GSO_DATASET_ROOT=/datasets \
+  -e GSO_RESULTS_ROOT=/results \
+  -v "$XAUTHORITY:/tmp/.Xauthority:ro" \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  -v "$PWD/dataset:/datasets:ro" \
+  -v "$PWD/docker/results:/results" \
+  gso-slam:rocm \
+  bash -lc "stdbuf -oL -eL /workspace/GSO-SLAM/build/bin/dso_dataset \
+    files=/datasets/TUM/rgbd_dataset_freiburg1_desk/rgb \
+    calib=/datasets/TUM/rgbd_dataset_freiburg1_desk/camera.txt \
+    dataassociation=/datasets/TUM/rgbd_dataset_freiburg1_desk/rgb.txt \
+    preset=0 mode=1 nogui=1 use_gaussian_viewer=1 \
+    cfg_yaml=/workspace/GSO-SLAM/cfg/gaussian_mapper/Monocular/TUM/tum_freiburg1_desk.yaml \
+    save_dir=/results/tum_gui_test"
+```
+
+Replica GUI example:
+
+```bash
+xhost +local:$(whoami)
+podman run --rm -it \
+  --network=host \
+  --device /dev/kfd:/dev/kfd \
+  --device /dev/dri:/dev/dri \
+  --group-add video \
+  --group-add render \
+  --security-opt seccomp=unconfined \
+  --cap-add=SYS_PTRACE \
+  --ipc=host \
+  -e DISPLAY="$DISPLAY" \
+  -e XAUTHORITY=/tmp/.Xauthority \
+  -e GSO_ROOT_DIR=/workspace/GSO-SLAM \
+  -e GSO_DATASET_ROOT=/datasets \
+  -e GSO_RESULTS_ROOT=/results \
+  -v "$XAUTHORITY:/tmp/.Xauthority:ro" \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  -v "$PWD/dataset:/datasets:ro" \
+  -v "$PWD/docker/results:/results" \
+  gso-slam:rocm \
+  bash -lc "stdbuf -oL -eL /workspace/GSO-SLAM/build/bin/dso_dataset \
+    files=/datasets/Replica/room0/results \
+    calib=/datasets/Replica/room0/camera.txt \
+    preset=0 mode=1 nogui=1 use_gaussian_viewer=1 which_dataset=replica \
+    cfg_yaml=/workspace/GSO-SLAM/cfg/gaussian_mapper/Monocular/Replica/replica_mono.yaml \
+    save_dir=/results/replica_room0_gui"
+```
 
 ## Documentation
 
