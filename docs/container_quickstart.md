@@ -73,9 +73,11 @@ The `cfg/gaussian_mapper/Monocular/` directory currently contains these presets:
 - Replica: `replica_mono.yaml`, `replica_mono_0.yaml`, `replica_mono_500.yaml`, `room0.yaml`, `room1.yaml`, `room2.yaml`, `office0.yaml`, `office1.yaml`, `office2.yaml`, `office3.yaml`, `office4.yaml`
 - TUM: `tum_mono.yaml`, `tum_freiburg1_desk.yaml`, `tum_freiburg2_xyz.yaml`, `tum_freiburg3_long_office_household.yaml`
 
-A simple way to run them all with Podman is to define a helper once and then call it for each YAML:
+A simple way to run them all with Podman is to use a small bash loop. Paste this as-is:
 
 ```bash
+set -e
+
 run_monocular_cfg() {
   local files_path="$1"
   local calib_path="$2"
@@ -112,119 +114,23 @@ run_monocular_cfg() {
       cfg_yaml=/workspace/GSO-SLAM/${cfg_path} \
       save_dir=/results/${save_path}"
 }
-```
 
-Replica configs:
+run_monocular_cfg /datasets/Replica/room0/results /datasets/Replica/room0/camera.txt "" "which_dataset=replica" cfg/gaussian_mapper/Monocular/Replica/replica_mono.yaml replica_room0_run
+run_monocular_cfg /datasets/Replica/room0/results /datasets/Replica/room0/camera.txt "" "which_dataset=replica" cfg/gaussian_mapper/Monocular/Replica/replica_mono_0.yaml replica_room0_mono_0_run
+run_monocular_cfg /datasets/Replica/room0/results /datasets/Replica/room0/camera.txt "" "which_dataset=replica" cfg/gaussian_mapper/Monocular/Replica/replica_mono_500.yaml replica_room0_mono_500_run
+run_monocular_cfg /datasets/Replica/room0/results /datasets/Replica/room0/camera.txt "" "which_dataset=replica" cfg/gaussian_mapper/Monocular/Replica/room0.yaml replica_room0_scene_run
+run_monocular_cfg /datasets/Replica/room1/results /datasets/Replica/room1/camera.txt "" "which_dataset=replica" cfg/gaussian_mapper/Monocular/Replica/room1.yaml replica_room1_scene_run
+run_monocular_cfg /datasets/Replica/room2/results /datasets/Replica/room2/camera.txt "" "which_dataset=replica" cfg/gaussian_mapper/Monocular/Replica/room2.yaml replica_room2_scene_run
+run_monocular_cfg /datasets/Replica/office0/results /datasets/Replica/office0/camera.txt "" "which_dataset=replica" cfg/gaussian_mapper/Monocular/Replica/office0.yaml replica_office0_scene_run
+run_monocular_cfg /datasets/Replica/office1/results /datasets/Replica/office1/camera.txt "" "which_dataset=replica" cfg/gaussian_mapper/Monocular/Replica/office1.yaml replica_office1_scene_run
+run_monocular_cfg /datasets/Replica/office2/results /datasets/Replica/office2/camera.txt "" "which_dataset=replica" cfg/gaussian_mapper/Monocular/Replica/office2.yaml replica_office2_scene_run
+run_monocular_cfg /datasets/Replica/office3/results /datasets/Replica/office3/camera.txt "" "which_dataset=replica" cfg/gaussian_mapper/Monocular/Replica/office3.yaml replica_office3_scene_run
+run_monocular_cfg /datasets/Replica/office4/results /datasets/Replica/office4/camera.txt "" "which_dataset=replica" cfg/gaussian_mapper/Monocular/Replica/office4.yaml replica_office4_scene_run
 
-```bash
-run_monocular_cfg /datasets/Replica/room0/results \
-  /datasets/Replica/room0/camera.txt \
-  "" \
-  "which_dataset=replica" \
-  cfg/gaussian_mapper/Monocular/Replica/replica_mono.yaml \
-  replica_room0_run
-
-run_monocular_cfg /datasets/Replica/room0/results \
-  /datasets/Replica/room0/camera.txt \
-  "" \
-  "which_dataset=replica" \
-  cfg/gaussian_mapper/Monocular/Replica/replica_mono_0.yaml \
-  replica_room0_mono_0_run
-
-run_monocular_cfg /datasets/Replica/room0/results \
-  /datasets/Replica/room0/camera.txt \
-  "" \
-  "which_dataset=replica" \
-  cfg/gaussian_mapper/Monocular/Replica/replica_mono_500.yaml \
-  replica_room0_mono_500_run
-
-run_monocular_cfg /datasets/Replica/room0/results \
-  /datasets/Replica/room0/camera.txt \
-  "" \
-  "which_dataset=replica" \
-  cfg/gaussian_mapper/Monocular/Replica/room0.yaml \
-  replica_room0_scene_run
-
-run_monocular_cfg /datasets/Replica/room1/results \
-  /datasets/Replica/room1/camera.txt \
-  "" \
-  "which_dataset=replica" \
-  cfg/gaussian_mapper/Monocular/Replica/room1.yaml \
-  replica_room1_scene_run
-
-run_monocular_cfg /datasets/Replica/room2/results \
-  /datasets/Replica/room2/camera.txt \
-  "" \
-  "which_dataset=replica" \
-  cfg/gaussian_mapper/Monocular/Replica/room2.yaml \
-  replica_room2_scene_run
-
-run_monocular_cfg /datasets/Replica/office0/results \
-  /datasets/Replica/office0/camera.txt \
-  "" \
-  "which_dataset=replica" \
-  cfg/gaussian_mapper/Monocular/Replica/office0.yaml \
-  replica_office0_scene_run
-
-run_monocular_cfg /datasets/Replica/office1/results \
-  /datasets/Replica/office1/camera.txt \
-  "" \
-  "which_dataset=replica" \
-  cfg/gaussian_mapper/Monocular/Replica/office1.yaml \
-  replica_office1_scene_run
-
-run_monocular_cfg /datasets/Replica/office2/results \
-  /datasets/Replica/office2/camera.txt \
-  "" \
-  "which_dataset=replica" \
-  cfg/gaussian_mapper/Monocular/Replica/office2.yaml \
-  replica_office2_scene_run
-
-run_monocular_cfg /datasets/Replica/office3/results \
-  /datasets/Replica/office3/camera.txt \
-  "" \
-  "which_dataset=replica" \
-  cfg/gaussian_mapper/Monocular/Replica/office3.yaml \
-  replica_office3_scene_run
-
-run_monocular_cfg /datasets/Replica/office4/results \
-  /datasets/Replica/office4/camera.txt \
-  "" \
-  "which_dataset=replica" \
-  cfg/gaussian_mapper/Monocular/Replica/office4.yaml \
-  replica_office4_scene_run
-```
-
-TUM configs:
-
-```bash
-run_monocular_cfg /datasets/TUM/rgbd_dataset_freiburg1_desk/rgb \
-  /datasets/TUM/rgbd_dataset_freiburg1_desk/camera.txt \
-  "dataassociation=/datasets/TUM/rgbd_dataset_freiburg1_desk/rgb.txt" \
-  "" \
-  cfg/gaussian_mapper/Monocular/TUM/tum_mono.yaml \
-  tum_freiburg1_desk_mono_run
-
-run_monocular_cfg /datasets/TUM/rgbd_dataset_freiburg1_desk/rgb \
-  /datasets/TUM/rgbd_dataset_freiburg1_desk/camera.txt \
-  "dataassociation=/datasets/TUM/rgbd_dataset_freiburg1_desk/rgb.txt" \
-  "" \
-  cfg/gaussian_mapper/Monocular/TUM/tum_freiburg1_desk.yaml \
-  tum_freiburg1_desk_scene_run
-
-run_monocular_cfg /datasets/TUM/rgbd_dataset_freiburg2_xyz/rgb \
-  /datasets/TUM/rgbd_dataset_freiburg2_xyz/camera.txt \
-  "dataassociation=/datasets/TUM/rgbd_dataset_freiburg2_xyz/rgb.txt" \
-  "" \
-  cfg/gaussian_mapper/Monocular/TUM/tum_freiburg2_xyz.yaml \
-  tum_freiburg2_xyz_scene_run
-
-run_monocular_cfg /datasets/TUM/rgbd_dataset_freiburg3_long_office_household/rgb \
-  /datasets/TUM/rgbd_dataset_freiburg3_long_office_household/camera.txt \
-  "dataassociation=/datasets/TUM/rgbd_dataset_freiburg3_long_office_household/rgb.txt" \
-  "" \
-  cfg/gaussian_mapper/Monocular/TUM/tum_freiburg3_long_office_household.yaml \
-  tum_freiburg3_long_office_household_scene_run
+run_monocular_cfg /datasets/TUM/rgbd_dataset_freiburg1_desk/rgb /datasets/TUM/rgbd_dataset_freiburg1_desk/camera.txt "dataassociation=/datasets/TUM/rgbd_dataset_freiburg1_desk/rgb.txt" "" cfg/gaussian_mapper/Monocular/TUM/tum_mono.yaml tum_freiburg1_desk_mono_run
+run_monocular_cfg /datasets/TUM/rgbd_dataset_freiburg1_desk/rgb /datasets/TUM/rgbd_dataset_freiburg1_desk/camera.txt "dataassociation=/datasets/TUM/rgbd_dataset_freiburg1_desk/rgb.txt" "" cfg/gaussian_mapper/Monocular/TUM/tum_freiburg1_desk.yaml tum_freiburg1_desk_scene_run
+run_monocular_cfg /datasets/TUM/rgbd_dataset_freiburg2_xyz/rgb /datasets/TUM/rgbd_dataset_freiburg2_xyz/camera.txt "dataassociation=/datasets/TUM/rgbd_dataset_freiburg2_xyz/rgb.txt" "" cfg/gaussian_mapper/Monocular/TUM/tum_freiburg2_xyz.yaml tum_freiburg2_xyz_scene_run
+run_monocular_cfg /datasets/TUM/rgbd_dataset_freiburg3_long_office_household/rgb /datasets/TUM/rgbd_dataset_freiburg3_long_office_household/camera.txt "dataassociation=/datasets/TUM/rgbd_dataset_freiburg3_long_office_household/rgb.txt" "" cfg/gaussian_mapper/Monocular/TUM/tum_freiburg3_long_office_household.yaml tum_freiburg3_long_office_household_scene_run
 ```
 
 | Argument | Description |
