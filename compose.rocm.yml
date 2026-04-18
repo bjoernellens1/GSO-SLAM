@@ -16,8 +16,18 @@ x-gso-rocm-gpu: &gso-rocm-gpu
   devices:
     - /dev/kfd:/dev/kfd
     - /dev/dri:/dev/dri
+  security_opt:
+    - seccomp=unconfined
+  cap_add:
+    - SYS_PTRACE
+  ipc: host
   group_add:
     - video
+    - render
+  environment:
+    HSA_ENABLE_SDMA: 0
+    HSA_XNACK: 1
+    # HSA_OVERRIDE_GFX_VERSION: 11.0.0 # Uncomment for Strix Point (gfx1151) if needed
 
 services:
   smoke:

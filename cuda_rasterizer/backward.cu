@@ -617,7 +617,11 @@ __global__ void preprocessCUDA(
 	glm::vec2* dL_dscales,
 	glm::vec4* dL_drots)
 {
+#ifdef USE_ROCM
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+#else
 	auto idx = cg::this_grid().thread_rank();
+#endif
 	if (idx >= P || !(radii[idx] > 0))
 		return;
 

@@ -4,25 +4,20 @@
 # SLAM Parameters
 #--------------------------------------------------------------------------------------------
 
-SLAM.which_dataset: 1 # 0: replica, 1: tum
-SLAM.depth_scale: 5000.0
-SLAM.image_width: 640
-SLAM.image_height: 480
-SLAM.distortion_k1: 0.2312
-SLAM.distortion_k2: -0.7849
-SLAM.distortion_p1: -0.0033
-SLAM.distortion_p2: -0.0001
-SLAM.distortion_k3: 0.9172
-Mapper.fx: 520.9
-Mapper.fy: 521.0
-Mapper.cx: 325.1
-Mapper.cy: 249.7
+SLAM.which_dataset: 0 # 0: replica, 1: tum
+SLAM.image_width: 1200
+SLAM.image_height: 680
+SLAM.distortion_k1: 0.00023840576144970707
+SLAM.distortion_k2: -0.00031479749960004814
+SLAM.distortion_p1: -7.392305313239943e-05
+SLAM.distortion_p2: -2.771600122416197e-05
+SLAM.distortion_k3: 0.0
 
 #--------------------------------------------------------------------------------------------
 # Model Parameters
 #--------------------------------------------------------------------------------------------
 
-Model.sh_degree: 0 # maximum
+Model.sh_degree: 3 # maximum
 Model.resolution: -1.0
 Model.white_background: 0  # 0:false, 1 or other integer:true
 Model.eval: 0  # 0:false, 1 or other integer:true
@@ -40,9 +35,15 @@ RGBD.min_depth: 0.0000000001
 RGBD.max_depth: 40.0
 
 Mapper.inactive_geo_densify: 1  # 0:false, 1 or other integer:true
+Mapper.dso_bridge_inactive_geo_densify: 0  # 0:false, 1:true
+Mapper.dso_bridge_transfer_known_depth: 0
+Mapper.dso_bridge_transfer_immature_points: 0
+Mapper.dso_bridge_replay_initial_keyframes: 0
+Mapper.dso_bridge_densify_new_keyframes: 0
+Mapper.flush_inactive_geo_cache_on_shutdown: 0
 Mapper.depth_cache: 10
 Mapper.min_num_initial_map_kfs: 3
-Mapper.new_keyframe_times_of_use: 3
+Mapper.new_keyframe_times_of_use: 8
 Mapper.local_BA_increased_times_of_use: 0
 Mapper.loop_closure_increased_times_of_use_: 2
 Mapper.cull_keyframes: 0  # 0:false, 1 or other integer:true
@@ -51,7 +52,7 @@ Mapper.large_translation_threshold: 0.5
 Mapper.stable_num_iter_existence: 1
 Mapper.lambda_sparse_depth: 500.0
 
-GausPyramid.do: 0  # 0:false, 1 or other integer:true
+GausPyramid.do: 1  # 0:false, 1 or other integer:true
 GausPyramid.num_sub_levels: 3
 GausPyramid.sub_level_times_of_use: 8
 
@@ -62,7 +63,7 @@ Pipeline.depth_ratio: 0.0 # for bounded scene 1.0, unbounded scene: 0.0
 Record.keyframe_record_interval: 0 # 0:never, 1:always, others:periodically
 Record.all_keyframes_record_interval: 0 # 0:never, 1:always, others:periodically
 Record.record_rendered_image: 1 # 0:false, 1 or other integer:true
-Record.record_ground_truth_image: 1 # 0:false, 1 or other integer:true
+Record.record_ground_truth_image: 0 # 0:false, 1 or other integer:true
 Record.record_loss_image: 0 # 0:false, 1 or other integer:true
 Record.record_depth_image: 1 # 0:false, 1 or other integer:true
 Record.training_report_interval: 0 # 0:never, 1:always, others:periodically
@@ -73,9 +74,9 @@ Record.record_loop_ply: 0 # 0:false, 1 or other integer:true
 #--------------------------------------------------------------------------------------------
 
 # Learning rate
-Optimization.max_num_iterations: 30100 # 30100
-Optimization.position_lr_init: 0.00016 #0.00032
-Optimization.position_lr_final: 0.00016 # 0.00016
+Optimization.max_num_iterations: 30100
+Optimization.position_lr_init: 0.00032 #0.00016
+Optimization.position_lr_final: 0.00016
 Optimization.position_lr_delay_mult: 0.01
 Optimization.position_lr_max_steps: 24
 Optimization.feature_lr: 0.0025
@@ -86,20 +87,21 @@ Optimization.rotation_lr: 0.001 #0.001
 # Densification
 Optimization.percent_dense: 0.01
 Optimization.lambda_dssim: 0.2
-Optimization.densification_interval: 100 # 100
+Optimization.densification_interval: 100
 Optimization.opacity_reset_interval: 0  # 0:never, 1:always, others:periodically
 Optimization.prune_big_point_after_iter: 30000
 Optimization.densify_min_opacity: 0.005 #0.005
-Optimization.densify_from_iter: 600  # 600
-Optimization.densify_until_iter: 30000 # 15000
-Optimization.densify_grad_threshold: 0.001 # 0.001
+Optimization.use_legacy_densify_from_iter_key: 1
+Optimization.densify_from_iter: 600
+Optimization.densify_until_iter: 30000
+Optimization.densify_grad_threshold: 0.001
 
 #--------------------------------------------------------------------------------------------
 # Viewer Parameters
 #--------------------------------------------------------------------------------------------
 
-GaussianViewer.glfw_window_width: 1200
-GaussianViewer.glfw_window_height: 680
+GaussianViewer.glfw_window_width: 1400
+GaussianViewer.glfw_window_height: 1050
 GaussianViewer.image_scale: 0.5
 GaussianViewer.image_scale_main: 1.0
 GaussianViewer.camera_watch_dist: 0.000001

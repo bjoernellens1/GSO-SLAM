@@ -285,6 +285,12 @@ protected:
 
     void increasePcdByKeyframeInactiveGeoDensify(
         std::shared_ptr<GaussianKeyframe> pkf);
+    void copyDsoBridgeInactiveGeoPayload(
+        const dso::FrozenFrameHessian& fh,
+        const std::shared_ptr<GaussianKeyframe>& pkf);
+    void flushCachedInactiveGeoPoints();
+    std::size_t tensorRowCount(const torch::Tensor& tensor) const;
+    void appendInactiveGeoDensifyStat(const std::string& line);
 
     // bool needInterruptTraining();
     // void setInterruptTraining(const bool interrupt_training);
@@ -407,6 +413,13 @@ protected:
     float RGBD_max_depth_ = 100.0f;
 
     bool inactive_geo_densify_ = true;
+    bool dso_bridge_inactive_geo_densify_ = false;
+    bool dso_bridge_transfer_known_depth_ = false;
+    bool dso_bridge_transfer_immature_points_ = false;
+    bool dso_bridge_replay_initial_keyframes_ = false;
+    bool dso_bridge_densify_new_keyframes_ = false;
+    bool flush_inactive_geo_cache_on_shutdown_ = false;
+    bool use_legacy_densify_from_iter_key_ = true;
     int depth_cached_ = 0;
     int max_depth_cached_ = 1;
     torch::Tensor depth_cache_points_;
@@ -428,6 +441,7 @@ protected:
     bool do_gaus_pyramid_training_;
 
     std::filesystem::path result_dir_;
+    std::filesystem::path inactive_geo_stats_path_;
     int keyframe_record_interval_;
     int all_keyframes_record_interval_;
     bool record_rendered_image_;

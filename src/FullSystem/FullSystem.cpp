@@ -1684,12 +1684,18 @@ void FullSystem::makeKeyFrame( FrameHessian* fh)
                     float y = ((ph->v - cy) / fy) * depth;
                     float z = depth;
 
-					Eigen::Vector3d point_in_camera(x, y, z);
-                    Eigen::Vector3d point_in_world = c2w * point_in_camera;
+						Eigen::Vector3d point_in_camera(x, y, z);
+	                    Eigen::Vector3d point_in_world = c2w * point_in_camera;
 
-					newFh->pointsInWorld.push_back(point_in_world.x());
-					newFh->pointsInWorld.push_back(point_in_world.y());
-					newFh->pointsInWorld.push_back(point_in_world.z());
+						newFh->kps_pixel.push_back(ph->u);
+						newFh->kps_pixel.push_back(ph->v);
+						newFh->kps_point_local.push_back(x);
+						newFh->kps_point_local.push_back(y);
+						newFh->kps_point_local.push_back(z);
+
+						newFh->pointsInWorld.push_back(point_in_world.x());
+						newFh->pointsInWorld.push_back(point_in_world.y());
+						newFh->pointsInWorld.push_back(point_in_world.z());
 
 					// scales
 					Eigen::Vector3f scales = ph->eigenvalues.cwiseSqrt();
@@ -1753,12 +1759,18 @@ void FullSystem::makeKeyFrame( FrameHessian* fh)
                     float y = ((ph->v - cy) / fy) * depth;
                     float z = depth;
 
-					Eigen::Vector3d point_in_camera(x, y, z);
-                    Eigen::Vector3d point_in_world = c2w * point_in_camera;
+						Eigen::Vector3d point_in_camera(x, y, z);
+	                    Eigen::Vector3d point_in_world = c2w * point_in_camera;
 
-					newFh->pointsInWorld.push_back(point_in_world.x());
-					newFh->pointsInWorld.push_back(point_in_world.y());
-					newFh->pointsInWorld.push_back(point_in_world.z());
+						newFh->kps_pixel.push_back(ph->u);
+						newFh->kps_pixel.push_back(ph->v);
+						newFh->kps_point_local.push_back(x);
+						newFh->kps_point_local.push_back(y);
+						newFh->kps_point_local.push_back(z);
+
+						newFh->pointsInWorld.push_back(point_in_world.x());
+						newFh->pointsInWorld.push_back(point_in_world.y());
+						newFh->pointsInWorld.push_back(point_in_world.z());
 
 					// scales
 					Eigen::Vector3f scales = ph->eigenvalues.cwiseSqrt();
@@ -1793,8 +1805,17 @@ void FullSystem::makeKeyFrame( FrameHessian* fh)
 					newFh->kfSparseDepth.at<float>(ph->v, ph->u) = 1. / ph->idepth_scaled;
 					frameHessiansFrozen[i]->kfSparseDepth.at<float>(ph->v, ph->u) = 1. / ph->idepth_scaled;
 				}
-			}	
-		} else { 		// only frozen kf
+				}
+				if (!frameHessians[i]->immaturePoints.empty()) {
+					for (ImmaturePoint* iph : frameHessians[i]->immaturePoints) {
+						newFh->kps_pixel.push_back(iph->u);
+						newFh->kps_pixel.push_back(iph->v);
+						newFh->kps_point_local.push_back(0.0f);
+						newFh->kps_point_local.push_back(0.0f);
+						newFh->kps_point_local.push_back(-1.0f);
+					}
+				}
+			} else { 		// only frozen kf
 			if (!frameHessians[i]->pointHessians.empty()) {
 				for (PointHessian* ph : frameHessians[i]->pointHessians) {
 					frameHessiansFrozen[i]->kfSparseDepth.at<float>(ph->v, ph->u) = 1. / ph->idepth_scaled;

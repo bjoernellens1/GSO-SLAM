@@ -72,7 +72,11 @@ __global__ void checkFrustum(int P,
 	const float* projmatrix,
 	bool* present)
 {
+#ifdef USE_ROCM
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+#else
 	auto idx = cg::this_grid().thread_rank();
+#endif
 	if (idx >= P)
 		return;
 
@@ -92,7 +96,11 @@ __global__ void duplicateWithKeys(
 	int* radii,
 	dim3 grid)
 {
+#ifdef USE_ROCM
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+#else
 	auto idx = cg::this_grid().thread_rank();
+#endif
 	if (idx >= P)
 		return;
 
@@ -130,7 +138,11 @@ __global__ void duplicateWithKeys(
 // Run once per instanced (duplicated) Gaussian ID.
 __global__ void identifyTileRanges(int L, uint64_t* point_list_keys, uint2* ranges)
 {
+#ifdef USE_ROCM
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+#else
 	auto idx = cg::this_grid().thread_rank();
+#endif
 	if (idx >= L)
 		return;
 

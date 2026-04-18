@@ -18,6 +18,24 @@
 
 #include "include/gaussian_mapper.h"
 
+namespace {
+
+const char* sensorTypeToString(SystemSensorType sensor_type)
+{
+    switch (sensor_type) {
+    case MONOCULAR:
+        return "MONOCULAR";
+    case STEREO:
+        return "STEREO";
+    case RGBD:
+        return "RGBD";
+    default:
+        return "INVALID";
+    }
+}
+
+} // namespace
+
 GaussianMapper::GaussianMapper(
     std::shared_ptr<dso::FullSystem> pSLAM,
     std::filesystem::path gaussian_config_file_path,
@@ -55,6 +73,14 @@ GaussianMapper::GaussianMapper(
 
     result_dir_ = result_dir;
     CHECK_DIRECTORY_AND_CREATE_IF_NOT_EXISTS(result_dir)
+    inactive_geo_stats_path_ = result_dir_ / "inactive_geo_densify_stats.txt";
+    {
+        std::ofstream stats(inactive_geo_stats_path_, std::ios::out | std::ios::trunc);
+        stats << "# event kfid sensor input_kps known_depth_kps accepted_points "
+              << "cache_frames_before cache_points_before cache_frames_after "
+              << "cache_points_after flushed_points iteration"
+              << std::endl;
+    }
     config_file_path_ = gaussian_config_file_path;
     readConfigFromFile(gaussian_config_file_path);
 
@@ -208,8 +234,10 @@ void GaussianMapper::readConfigFromFile(std::filesystem::path cfg_path)
         settings_file["SLAM.distortion_p2"].operator float();
     distortion_k3 =
         settings_file["SLAM.distortion_k3"].operator float();
-    // depth_scale =
-    //     settings_file["SLAM.depth_scale"].operator float();
+    cv::FileNode depth_scale_node = settings_file["SLAM.depth_scale"];
+    if (!depth_scale_node.empty()) {
+        depth_scale = depth_scale_node.operator float();
+    }
     mapping_fx =
         settings_file["Mapper.fx"].operator float();
     mapping_fy =
@@ -259,6 +287,42 @@ void GaussianMapper::readConfigFromFile(std::filesystem::path cfg_path)
 
     inactive_geo_densify_ =
         (settings_file["Mapper.inactive_geo_densify"].operator int()) != 0;
+    cv::FileNode dso_bridge_inactive_geo_densify_node =
+        settings_file["Mapper.dso_bridge_inactive_geo_densify"];
+    if (!dso_bridge_inactive_geo_densify_node.empty()) {
+        dso_bridge_inactive_geo_densify_ =
+            (dso_bridge_inactive_geo_densify_node.operator int()) != 0;
+    }
+    cv::FileNode dso_bridge_transfer_known_depth_node =
+        settings_file["Mapper.dso_bridge_transfer_known_depth"];
+    if (!dso_bridge_transfer_known_depth_node.empty()) {
+        dso_bridge_transfer_known_depth_ =
+            (dso_bridge_transfer_known_depth_node.operator int()) != 0;
+    }
+    cv::FileNode dso_bridge_transfer_immature_points_node =
+        settings_file["Mapper.dso_bridge_transfer_immature_points"];
+    if (!dso_bridge_transfer_immature_points_node.empty()) {
+        dso_bridge_transfer_immature_points_ =
+            (dso_bridge_transfer_immature_points_node.operator int()) != 0;
+    }
+    cv::FileNode dso_bridge_replay_initial_keyframes_node =
+        settings_file["Mapper.dso_bridge_replay_initial_keyframes"];
+    if (!dso_bridge_replay_initial_keyframes_node.empty()) {
+        dso_bridge_replay_initial_keyframes_ =
+            (dso_bridge_replay_initial_keyframes_node.operator int()) != 0;
+    }
+    cv::FileNode dso_bridge_densify_new_keyframes_node =
+        settings_file["Mapper.dso_bridge_densify_new_keyframes"];
+    if (!dso_bridge_densify_new_keyframes_node.empty()) {
+        dso_bridge_densify_new_keyframes_ =
+            (dso_bridge_densify_new_keyframes_node.operator int()) != 0;
+    }
+    cv::FileNode flush_inactive_geo_cache_on_shutdown_node =
+        settings_file["Mapper.flush_inactive_geo_cache_on_shutdown"];
+    if (!flush_inactive_geo_cache_on_shutdown_node.empty()) {
+        flush_inactive_geo_cache_on_shutdown_ =
+            (flush_inactive_geo_cache_on_shutdown_node.operator int()) != 0;
+    }
     max_depth_cached_ =
         settings_file["Mapper.depth_cache"].operator int();
     min_num_initial_map_kfs_ = 
@@ -341,8 +405,32 @@ void GaussianMapper::readConfigFromFile(std::filesystem::path cfg_path)
         settings_file["Optimization.densification_interval"].operator int();
     opt_params_.opacity_reset_interval_ =
         settings_file["Optimization.opacity_reset_interval"].operator int();
-    opt_params_.densify_from_iter_ =
-        settings_file["Optimization.densify_from_iter_"].operator int();
+    cv::FileNode use_legacy_densify_from_iter_key_node =
+        settings_file["Optimization.use_legacy_densify_from_iter_key"];
+    if (!use_legacy_densify_from_iter_key_node.empty()) {
+        use_legacy_densify_from_iter_key_ =
+            (use_legacy_densify_from_iter_key_node.operator int()) != 0;
+    }
+    cv::FileNode legacy_densify_from_iter_node =
+        settings_file["Optimization.densify_from_iter_"];
+    cv::FileNode densify_from_iter_node =
+        settings_file["Optimization.densify_from_iter"];
+    if (use_legacy_densify_from_iter_key_) {
+        opt_params_.densify_from_iter_ =
+            legacy_densify_from_iter_node.empty()
+                ? 0
+                : legacy_densify_from_iter_node.operator int();
+    }
+    else if (!densify_from_iter_node.empty()) {
+        opt_params_.densify_from_iter_ =
+            densify_from_iter_node.operator int();
+    }
+    else {
+        opt_params_.densify_from_iter_ =
+            legacy_densify_from_iter_node.empty()
+                ? 0
+                : legacy_densify_from_iter_node.operator int();
+    }
     opt_params_.densify_until_iter_ =
         settings_file["Optimization.densify_until_iter"].operator int();
     opt_params_.densify_grad_threshold_ =
@@ -362,6 +450,41 @@ void GaussianMapper::readConfigFromFile(std::filesystem::path cfg_path)
     // Localization
     loc_camera_cfg_path =
         settings_file["Localization.camera_cfg_path"].operator std::string();
+}
+
+void GaussianMapper::copyDsoBridgeInactiveGeoPayload(
+    const dso::FrozenFrameHessian& fh,
+    const std::shared_ptr<GaussianKeyframe>& pkf)
+{
+    pkf->kps_pixel_.clear();
+    pkf->kps_point_local_.clear();
+
+    if (!dso_bridge_inactive_geo_densify_)
+        return;
+
+    const std::size_t num_keypoints = fh.kps_pixel.size() / 2;
+    if (num_keypoints == 0)
+        return;
+
+    pkf->kps_pixel_.reserve(fh.kps_pixel.size());
+    pkf->kps_point_local_.reserve(fh.kps_point_local.size());
+
+    for (std::size_t idx = 0; idx < num_keypoints; ++idx) {
+        const std::size_t pixel_offset = idx * 2;
+        const std::size_t point_offset = idx * 3;
+        const float z = fh.kps_point_local[point_offset + 2];
+        const bool has_known_depth = z > 0.0f;
+        if ((has_known_depth && !dso_bridge_transfer_known_depth_) ||
+            (!has_known_depth && !dso_bridge_transfer_immature_points_)) {
+            continue;
+        }
+
+        pkf->kps_pixel_.push_back(fh.kps_pixel[pixel_offset]);
+        pkf->kps_pixel_.push_back(fh.kps_pixel[pixel_offset + 1]);
+        pkf->kps_point_local_.push_back(fh.kps_point_local[point_offset]);
+        pkf->kps_point_local_.push_back(fh.kps_point_local[point_offset + 1]);
+        pkf->kps_point_local_.push_back(z);
+    }
 }
 
 void GaussianMapper::run()
@@ -465,14 +588,6 @@ void GaussianMapper::run()
                         imgRGB_undistorted.convertTo(imgRGB_undistorted, CV_32FC3, 1.0 / 255.0);
                         new_kf->original_image_ =
                             tensor_utils::cvMat2TorchTensor_Float32(imgRGB_undistorted, device_type_);
-                        
-                        // Depth image
-                        // dso::MinimalImage<unsigned short>* depth_img = fh->kf_depth;
-                        // cv::Mat imgDepth(depth_img->h, depth_img->w, CV_16UC1, depth_img->data);
-                        // cv::Mat imgDepthFloat;
-                        // imgDepth.convertTo(imgDepthFloat, CV_32FC1, 1.0 / depth_scale);
-                        // new_kf->original_depth_ =
-                        //     tensor_utils::cvMat2TorchTensor_Float32(imgDepthFloat, device_type_);
 
                         // Sparse Depth
                         new_kf->sparse_depth_ =
@@ -498,6 +613,7 @@ void GaussianMapper::run()
                     // pKF->GetKeypointInfo(pixels, pointsLocal);
                     // new_kf->kps_pixel_ = std::move(pixels);
                     // new_kf->kps_point_local_ = std::move(pointsLocal);
+                    copyDsoBridgeInactiveGeoPayload(*fh, new_kf);
                     new_kf->img_undist_ = imgRGB_undistorted;
                     new_kf->img_auxiliary_undist_ = imgAux_undistorted;
                     
@@ -554,6 +670,14 @@ void GaussianMapper::run()
                 gaussians_->createFromPcd(new_points, new_colors, new_scales, new_rots, scene_->cameras_extent_);
                 std::unique_lock<std::mutex> lock(mutex_settings_);
                 gaussians_->trainingSetup(opt_params_);
+            }
+            if (dso_bridge_inactive_geo_densify_ &&
+                dso_bridge_replay_initial_keyframes_ &&
+                isdoingInactiveGeoDensify()) {
+                for (auto& kfit : scene_->keyframes()) {
+                    if (!kfit.second->kps_pixel_.empty())
+                        increasePcdByKeyframeInactiveGeoDensify(kfit.second);
+                }
             }
             // Invoke training once
             trainForOneIteration();
@@ -624,6 +748,8 @@ void GaussianMapper::run()
     // }
 
     // Save and clear
+    if (flush_inactive_geo_cache_on_shutdown_)
+        flushCachedInactiveGeoPoints();
     renderAndRecordAllKeyframes("_shutdown");
     savePly(result_dir_ / "gs_map");
     writeKeyframeUsedTimes(result_dir_ / "used_times", "final");
@@ -701,6 +827,8 @@ void GaussianMapper::trainColmap()
     }
 
     // Save and clear
+    if (flush_inactive_geo_cache_on_shutdown_)
+        flushCachedInactiveGeoPoints();
     renderAndRecordAllKeyframes("_shutdown");
     savePly(result_dir_ / (std::to_string(getIteration()) + "_shutdown") / "ply");
     writeKeyframeUsedTimes(result_dir_ / "used_times", "final");
@@ -1073,14 +1201,6 @@ void GaussianMapper::combineMappingOperations()
                 new_kf->original_image_ =
                     tensor_utils::cvMat2TorchTensor_Float32(imgRGB_undistorted, device_type_);
 
-                // Depth image
-                // dso::MinimalImage<unsigned short>* depth_img = fh->kf_depth;
-                // cv::Mat imgDepth(depth_img->h, depth_img->w, CV_16UC1, depth_img->data);
-                // cv::Mat imgDepthFloat;
-                // imgDepth.convertTo(imgDepthFloat, CV_32FC1, 1.0 / depth_scale);
-                // new_kf->original_depth_ =
-                //     tensor_utils::cvMat2TorchTensor_Float32(imgDepthFloat, device_type_);
-
                 // Sparse Depth
                 new_kf->sparse_depth_ =
                     tensor_utils::cvMat2TorchTensor_Float32(fh->kfSparseDepth, device_type_);
@@ -1102,8 +1222,14 @@ void GaussianMapper::combineMappingOperations()
             // pKF->GetKeypointInfo(pixels, pointsLocal);
             // new_kf->kps_pixel_ = std::move(pixels);
             // new_kf->kps_point_local_ = std::move(pointsLocal);
+            copyDsoBridgeInactiveGeoPayload(*fh, new_kf);
             new_kf->img_undist_ = imgRGB_undistorted;
             new_kf->img_auxiliary_undist_ = imgAux_undistorted;
+            if (dso_bridge_inactive_geo_densify_ &&
+                dso_bridge_densify_new_keyframes_ &&
+                isdoingInactiveGeoDensify() &&
+                !new_kf->kps_pixel_.empty())
+                increasePcdByKeyframeInactiveGeoDensify(new_kf);
             // Prepare multi resolution images for training
             if (device_type_ == torch::kCUDA) {
 #if GSO_HAS_OPENCV_CUDA
@@ -1463,6 +1589,11 @@ void GaussianMapper::increasePcdByKeyframeInactiveGeoDensify(
     torch::NoGradGuard no_grad;
 
     Sophus::SE3f Twc = pkf->getPosef().inverse();
+    const std::size_t cache_frames_before = depth_cached_;
+    const std::size_t cache_points_before = tensorRowCount(depth_cache_points_);
+    std::size_t input_kps = 0;
+    std::size_t known_depth_kps = 0;
+    std::size_t accepted_points = 0;
 
     switch (this->sensor_type_)
     {
@@ -1471,6 +1602,7 @@ void GaussianMapper::increasePcdByKeyframeInactiveGeoDensify(
 // savePly(result_dir_ / (std::to_string(getIteration()) + "_" + std::to_string(pkf->fid_) + "_0_before_inactive_geo_densify"));
         assert(pkf->kps_pixel_.size() % 2 == 0);
         int N = pkf->kps_pixel_.size() / 2;
+        input_kps = static_cast<std::size_t>(N);
         torch::Tensor kps_pixel_tensor = torch::from_blob(
             pkf->kps_pixel_.data(), {N, 2},
             torch::TensorOptions().dtype(torch::kFloat32)).to(device_type_);
@@ -1479,6 +1611,8 @@ void GaussianMapper::increasePcdByKeyframeInactiveGeoDensify(
             torch::TensorOptions().dtype(torch::kFloat32)).to(device_type_);
         torch::Tensor kps_has3D_tensor = torch::where(
             kps_point_local_tensor.index({torch::indexing::Slice(), 2}) > 0.0f, true, false);
+        known_depth_kps =
+            static_cast<std::size_t>(kps_has3D_tensor.sum().item<int64_t>());
 
 #if !GSO_HAS_OPENCV_CUDA
         torch::Tensor colors = tensor_utils::cvMat2TorchTensor_Float32(pkf->img_undist_, device_type_);
@@ -1495,6 +1629,7 @@ void GaussianMapper::increasePcdByKeyframeInactiveGeoDensify(
                 monocular_inactive_geo_densify_max_pixel_dist_, pkf->intr_, pkf->image_width_);
         torch::Tensor& points3D_valid = std::get<0>(result);
         torch::Tensor& colors_valid = std::get<1>(result);
+        accepted_points = tensorRowCount(points3D_valid);
         // Transform points to the world coordinate
         torch::Tensor Twc_tensor =
             tensor_utils::EigenMatrix2TorchTensor(
@@ -1579,6 +1714,7 @@ void GaussianMapper::increasePcdByKeyframeInactiveGeoDensify(
         torch::Tensor point_valid_flags = torch::full(
             {disp.size(0)}, false, torch::TensorOptions().dtype(torch::kBool).device(device_type_));
         int nkps_twice = pkf->kps_pixel_.size();
+        input_kps = static_cast<std::size_t>(nkps_twice / 2);
         int width = pkf->image_width_;
         for (int kpidx = 0; kpidx < nkps_twice; kpidx += 2) {
             int idx = static_cast<int>(/*u*/pkf->kps_pixel_[kpidx]) + static_cast<int>(/*v*/pkf->kps_pixel_[kpidx + 1]) * width;
@@ -1600,6 +1736,8 @@ void GaussianMapper::increasePcdByKeyframeInactiveGeoDensify(
 
         torch::Tensor points3D_valid = points3D.index({point_valid_flags});
         torch::Tensor colors_valid = colors.index({point_valid_flags});
+        accepted_points = tensorRowCount(points3D_valid);
+        known_depth_kps = accepted_points;
 
         // Transform points to the world coordinate
         torch::Tensor Twc_tensor =
@@ -1645,6 +1783,7 @@ void GaussianMapper::increasePcdByKeyframeInactiveGeoDensify(
         torch::Tensor point_valid_flags = torch::full(
             {depth.size(0)}, false/*true*/, torch::TensorOptions().dtype(torch::kBool).device(device_type_));
         int nkps_twice = pkf->kps_pixel_.size();
+        input_kps = static_cast<std::size_t>(nkps_twice / 2);
         int width = pkf->image_width_;
         for (int kpidx = 0; kpidx < nkps_twice; kpidx += 2) {
             int idx = static_cast<int>(/*u*/pkf->kps_pixel_[kpidx]) + static_cast<int>(/*v*/pkf->kps_pixel_[kpidx + 1]) * width;
@@ -1683,6 +1822,8 @@ void GaussianMapper::increasePcdByKeyframeInactiveGeoDensify(
         break;
         }
         points3D_valid = points3D_valid.index({point_valid_flags});
+        accepted_points = tensorRowCount(points3D_valid);
+        known_depth_kps = accepted_points;
 
         // Transform points to the world coordinate
         torch::Tensor Twc_tensor =
@@ -1713,13 +1854,32 @@ void GaussianMapper::increasePcdByKeyframeInactiveGeoDensify(
 
     pkf->done_inactive_geo_densify_ = true;
     ++depth_cached_;
+    std::size_t flushed_points = 0;
 
     if (depth_cached_ >= max_depth_cached_) {
-        depth_cached_ = 0;
+        flushed_points = tensorRowCount(depth_cache_points_);
         // Add new points to the model
         std::unique_lock<std::mutex> lock_render(mutex_render_);
         gaussians_->increasePcd(depth_cache_points_, depth_cache_colors_, getIteration());
+        depth_cached_ = 0;
+        depth_cache_points_ = torch::Tensor();
+        depth_cache_colors_ = torch::Tensor();
     }
+
+    std::ostringstream oss;
+    oss << "event=cache"
+        << " kfid=" << pkf->fid_
+        << " sensor=" << sensorTypeToString(sensor_type_)
+        << " input_kps=" << input_kps
+        << " known_depth_kps=" << known_depth_kps
+        << " accepted_points=" << accepted_points
+        << " cache_frames_before=" << cache_frames_before
+        << " cache_points_before=" << cache_points_before
+        << " cache_frames_after=" << depth_cached_
+        << " cache_points_after=" << tensorRowCount(depth_cache_points_)
+        << " flushed_points=" << flushed_points
+        << " iteration=" << getIteration();
+    appendInactiveGeoDensifyStat(oss.str());
 
 // auto end_timing = std::chrono::steady_clock::now();
 // auto completion_time = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1728,6 +1888,53 @@ void GaussianMapper::increasePcdByKeyframeInactiveGeoDensify(
 //             << completion_time
 //             << " ms"
 //             << std::endl;
+}
+
+void GaussianMapper::flushCachedInactiveGeoPoints()
+{
+    if (depth_cached_ == 0)
+        return;
+
+    const std::size_t cache_frames_before = depth_cached_;
+    const std::size_t flushed_points = tensorRowCount(depth_cache_points_);
+    std::unique_lock<std::mutex> lock_render(mutex_render_);
+    gaussians_->increasePcd(depth_cache_points_, depth_cache_colors_, getIteration());
+    depth_cached_ = 0;
+    depth_cache_points_ = torch::Tensor();
+    depth_cache_colors_ = torch::Tensor();
+
+    std::ostringstream oss;
+    oss << "event=flush"
+        << " kfid=-1"
+        << " sensor=" << sensorTypeToString(sensor_type_)
+        << " input_kps=0"
+        << " known_depth_kps=0"
+        << " accepted_points=0"
+        << " cache_frames_before=" << cache_frames_before
+        << " cache_points_before=" << flushed_points
+        << " cache_frames_after=" << depth_cached_
+        << " cache_points_after=0"
+        << " flushed_points=" << flushed_points
+        << " iteration=" << getIteration();
+    appendInactiveGeoDensifyStat(oss.str());
+}
+
+std::size_t GaussianMapper::tensorRowCount(const torch::Tensor& tensor) const
+{
+    if (!tensor.defined() || tensor.numel() == 0)
+        return 0;
+
+    if (tensor.dim() == 0)
+        return 1;
+
+    return static_cast<std::size_t>(tensor.size(0));
+}
+
+void GaussianMapper::appendInactiveGeoDensifyStat(const std::string& line)
+{
+    std::ofstream stats(inactive_geo_stats_path_, std::ios::app);
+    stats << line << std::endl;
+    std::cout << "[Gaussian Mapper][InactiveGeoDensify] " << line << std::endl;
 }
 
 // bool GaussianMapper::needInterruptTraining()

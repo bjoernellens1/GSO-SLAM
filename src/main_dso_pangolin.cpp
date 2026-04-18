@@ -50,8 +50,11 @@
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 
-#include "IOWrapper/Pangolin/PangolinDSOViewer.h"
 #include "IOWrapper/OutputWrapper/SampleOutputWrapper.h"
+
+#ifdef HAVE_PANGOLIN_VIEWER
+#include "IOWrapper/Pangolin/PangolinDSOViewer.h"
+#endif
 
 #include <rerun.hpp>
 #include <sophus/se3.hpp>
@@ -757,14 +760,33 @@ int main( int argc, char** argv )
 	// if (mode == 1 || mode == 2) {
 	pGausMapper = std::make_shared<GaussianMapper>(
 		fullSystem, cfg_path, output_dir, 0, device_type);
+	if (which_dataset == "replica" || which_dataset == "scannet")
+	{
+		pGausMapper->setSensorType(MONOCULAR);
+	}
+	else if (which_dataset == "tum_rgbd")
+	{
+		if (reader->RGBorRGBD == "RGB-D")
+			pGausMapper->setSensorType(RGBD);
+		else
+			pGausMapper->setSensorType(MONOCULAR);
+	}
+	else
+	{
+		pGausMapper->setSensorType(MONOCULAR);
+	}
 	training_thd = std::thread(&GaussianMapper::run, pGausMapper.get());
 	// }
 
-    IOWrap::PangolinDSOViewer* viewer = 0;
 	if(!disableAllDisplay)
     {
-        viewer = new IOWrap::PangolinDSOViewer(wG[0],hG[0], false);
+#ifdef HAVE_PANGOLIN_VIEWER
+        auto* viewer = new IOWrap::PangolinDSOViewer(wG[0], hG[0], false);
         fullSystem->outputWrapper.push_back(viewer);
+#else
+        fprintf(stderr, "Display requested but Pangolin support is not built; forcing headless mode.\n");
+        disableAllDisplay = true;
+#endif
     }
 
 	std::thread viewer_thd;
@@ -901,9 +923,10 @@ int main( int argc, char** argv )
 						// std::cout << lastKeyframe->shell->incoming_id << std::endl;
 						gt_img = reader->getImageRawRGB(lastKeyframe->shell->incoming_id);
 
-						// if (mode!=0 && reader->RGBorRGBD == "RGB-D") {
-						// 	gt_depth = reader->getImageRawDepth(lastKeyframe->shell->incoming_id);
-						// }
+						if (reader->RGBorRGBD == "RGB-D") {
+							gt_depth = reader->getImageRawDepth(lastKeyframe->shell->incoming_id);
+							lastKeyframe->kf_depth = gt_depth;
+						}
 						
 						lastKeyframe->kf_img = gt_img;
 

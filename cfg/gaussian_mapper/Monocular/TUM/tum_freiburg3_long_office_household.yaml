@@ -5,6 +5,7 @@
 #--------------------------------------------------------------------------------------------
 
 SLAM.which_dataset: 1 # 0: replica, 1: tum
+SLAM.depth_scale: 5000.0
 SLAM.image_width: 640
 SLAM.image_height: 480
 SLAM.distortion_k1: 0.0

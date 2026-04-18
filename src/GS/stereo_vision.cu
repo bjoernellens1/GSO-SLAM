@@ -53,7 +53,11 @@ __global__ void reproject_depths_pinhole(
     const bool* mask,
     float* points)
 {
+#ifdef USE_ROCM
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+#else
     auto idx = cg::this_grid().thread_rank();
+#endif
     if (idx >= P || !mask[idx])
         return;
 
@@ -81,7 +85,11 @@ __global__ void search_neighborhood_to_estimate_depth_and_reproject_pinhole(
     float* point3D_result,
     float* colors_result)
 {
+#ifdef USE_ROCM
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+#else
     auto idx = cg::this_grid().thread_rank();
+#endif
     if (idx >= N)
         return;
 

@@ -180,7 +180,11 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	uint32_t* tiles_touched,
 	bool prefiltered)
 {
+#ifdef USE_ROCM
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+#else
 	auto idx = cg::this_grid().thread_rank();
+#endif
 	if (idx >= P)
 		return;
 

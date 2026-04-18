@@ -46,7 +46,11 @@ __global__ void transform_points(
     const float* transformmatrix,
     float* trans_points)
 {
+#ifdef USE_ROCM
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+#else
     auto idx = cg::this_grid().thread_rank();
+#endif
     if (idx >= P)
         return;
 
@@ -64,7 +68,11 @@ __global__ void scale_and_transform_points(
     float* trans_points,
     float* trans_rots)
 {
+#ifdef USE_ROCM
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+#else
     auto idx = cg::this_grid().thread_rank();
+#endif
     if (idx >= P || !mask[idx])
         return;
 

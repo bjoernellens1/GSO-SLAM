@@ -521,9 +521,10 @@ struct FrozenFrameHessian
 	std::vector<float> colors;
 	std::vector<float> scales;
 	std::vector<float> rots;
-};
+	std::vector<float> kps_pixel;
+	std::vector<float> kps_point_local;
+	};
 
 
 
 }
-

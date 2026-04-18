@@ -44,6 +44,12 @@ RGBD.min_depth: 0.0000000001
 RGBD.max_depth: 40.0
 
 Mapper.inactive_geo_densify: 1  # 0:false, 1 or other integer:true
+Mapper.dso_bridge_inactive_geo_densify: 0  # 0:false, 1:true
+Mapper.dso_bridge_transfer_known_depth: 0
+Mapper.dso_bridge_transfer_immature_points: 0
+Mapper.dso_bridge_replay_initial_keyframes: 0
+Mapper.dso_bridge_densify_new_keyframes: 0
+Mapper.flush_inactive_geo_cache_on_shutdown: 0
 Mapper.min_num_initial_map_kfs: 3 # must be smaller than 8
 Mapper.new_keyframe_times_of_use: 3 # 8
 Mapper.local_BA_increased_times_of_use: 0
@@ -93,6 +99,7 @@ Optimization.densification_interval: 100 # 100
 Optimization.opacity_reset_interval: 0  # 0:never, 1:always, others:periodically
 Optimization.prune_big_point_after_iter: 30000  # 30000
 Optimization.densify_min_opacity: 0.005 #0.005
+Optimization.use_legacy_densify_from_iter_key: 1
 Optimization.densify_from_iter: 600  # 600
 Optimization.densify_until_iter: 8000 # 15000
 Optimization.densify_grad_threshold: 0.001 # 0.001

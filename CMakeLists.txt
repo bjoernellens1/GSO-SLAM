@@ -386,16 +386,20 @@ else()
     set(BOOST_THREAD_LIBRARY boost_thread)
 endif()
 
-# build main executable (only if we have both OpenCV and Pangolin)
-if (OpenCV_FOUND AND Pangolin_FOUND)
+# build main executable; Pangolin is optional for headless `nogui=1` runs
+if (OpenCV_FOUND)
 	message("--- compiling dso_dataset.")
 	add_executable(dso_dataset ${PROJECT_SOURCE_DIR}/src/main_dso_pangolin.cpp )
-    target_link_libraries(dso_dataset PRIVATE dso boost_system cxsparse ${BOOST_THREAD_LIBRARY} ${LIBZIP_LIBRARY} ${Pangolin_LIBRARIES} ${OpenCV_LIBS} 
+    target_link_libraries(dso_dataset PRIVATE dso boost_system cxsparse ${BOOST_THREAD_LIBRARY} ${LIBZIP_LIBRARY} ${OpenCV_LIBS} 
                             ${GSO_TORCH_TARGET_LIBRARIES} $<LINK_ONLY:gaussian_mapper> rerun_sdk $<LINK_ONLY:gaussian_viewer>)
+    if (Pangolin_FOUND)
+        target_compile_definitions(dso_dataset PRIVATE HAVE_PANGOLIN_VIEWER=1)
+        target_link_libraries(dso_dataset PRIVATE ${Pangolin_LIBRARIES})
+    endif()
     if(USE_ROCM)
         set_property(TARGET dso_dataset APPEND_STRING PROPERTY COMPILE_FLAGS " -x c++")
     endif()
 
 else()
-	message("--- not building dso_dataset, since either don't have openCV or Pangolin.")
+	message("--- not building dso_dataset, since OpenCV is missing.")
 endif()

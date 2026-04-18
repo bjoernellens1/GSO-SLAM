@@ -67,6 +67,8 @@ RUN apt-get update && \
         libzip-dev \
         # Fast ANN (via PCL)
         libflann-dev \
+        # GUI (Pangolin) dependencies
+        libx11-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # --------------------------------------------------------------------------
