@@ -1,8 +1,10 @@
 #!/bin/bash
 set -e
 
-REPLICA_DIR="../dataset/Replica"
-RESULT_DIR="./results/test"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPLICA_DIR="${REPO_DIR}/dataset/Replica"
+RESULT_DIR="${SCRIPT_DIR}/results/test"
 OUTPUT_TXT="${RESULT_DIR}/replica_results.txt"
 
 mkdir -p "${RESULT_DIR}"
@@ -20,7 +22,7 @@ do
     echo "Processing: Replica ${dataset_name}"
     echo "Replica ${dataset_name}" >> "${OUTPUT_TXT}"
 
-    ../build/bin/dso_dataset \
+    "${REPO_DIR}/build/bin/dso_dataset" \
         files="${DATASET_DIR}/results" \
         calib="${DATASET_DIR}/camera.txt" \
         gamma="${DATASET_DIR}/pcalib.txt" \
@@ -30,7 +32,7 @@ do
         quiet=1 \
         nogui=1 \
         which_dataset=replica \
-        cfg_yaml="${HOME}/GSO_SLAM/cfg/gaussian_mapper/Monocular/Replica/replica_mono.yaml" \
+        cfg_yaml="${REPO_DIR}/cfg/gaussian_mapper/Monocular/Replica/replica_mono.yaml" \
         save_dir="${SAVE_PATH}" \
         use_gaussian_viewer=0
 

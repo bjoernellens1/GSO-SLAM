@@ -24,7 +24,8 @@
 
 #pragma once
 
- 
+#include <cassert>
+
 #include "util/NumType.h"
 #include "vector"
 #include <math.h>
@@ -165,4 +166,3 @@ public:
 };
 
 }
-

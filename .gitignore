@@ -10,3 +10,15 @@ build-*
 result.txt
 experiments_bash/results
 imgui.ini
+images_out/
+logs/
+mats/
+build/
+build-*/
+bin/
+dataset/Replica/
+dataset/TUM/
+dataset/Scannet/
+*.pyc
+__pycache__/
+.ipynb_checkpoints/

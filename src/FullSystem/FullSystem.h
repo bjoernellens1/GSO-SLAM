@@ -25,6 +25,8 @@
 #pragma once
 #define MAX_ACTIVE_FRAMES 100
 
+#include <cassert>
+
 #include <deque>
 #include "util/NumType.h"
 #include "util/globalCalib.h"
@@ -384,4 +386,3 @@ private:
 	std::vector<float> getPointBGR(MinimalImageB3* img, float u, float v);
 };
 }
-

@@ -25,7 +25,8 @@
 #pragma once
 #define MAX_ACTIVE_FRAMES 100
 
- 
+#include <cassert>
+
 #include "util/globalCalib.h"
 #include "vector"
  
@@ -526,4 +527,3 @@ struct FrozenFrameHessian
 
 
 }
-

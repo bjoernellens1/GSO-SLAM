@@ -24,7 +24,8 @@
 
 #pragma once
 
- 
+#include <cassert>
+
 #include "util/NumType.h"
 #include "util/IndexThreadReduce.h"
 #include "OptimizationBackend/MatrixAccumulators.h"
@@ -156,4 +157,3 @@ private:
 };
 
 }
-

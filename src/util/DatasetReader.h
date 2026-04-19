@@ -333,7 +333,7 @@ public:
 
 	MinimalDepthB16* getImageRawDepth(int id)
 	{
-			return IOWrap::readImageDepth_16U(depth_files[id]);
+			return IOWrap::readImageDepth_16U(depth_files[id].c_str());
 	}
 
 	ImageAndExposure* getImage(int id, bool forceLoadDirectly=false)
@@ -374,7 +374,7 @@ private:
 		if(!isZipped)
 		{
 			// CHANGE FOR ZIP FILE
-			return IOWrap::readImageBW_8U(files[id]);
+			return IOWrap::readImageBW_8U(files[id].c_str());
 		}
 		else
 		{
@@ -411,7 +411,7 @@ private:
 	{
 		if(!isZipped)
 		{
-			return IOWrap::readImageRGB_8U(files[id]);
+			return IOWrap::readImageRGB_8U(files[id].c_str());
 		}
 		else
 		{
@@ -447,7 +447,7 @@ private:
 	{
 		if(!isZipped)
 		{
-			return IOWrap::readImageRGB_8U_resized(files[id], width, height);
+			return IOWrap::readImageRGB_8U_resized(files[id].c_str(), width, height);
 		}
 		else
 		{
@@ -578,4 +578,3 @@ private:
 	char* databuffer;
 #endif
 };
-

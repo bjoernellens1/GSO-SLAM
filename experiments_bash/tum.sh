@@ -1,8 +1,10 @@
 #!/bin/bash
 set -e
 
-TUM_DIR="../dataset/TUM"
-RESULT_DIR="./results/test"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+TUM_DIR="${REPO_DIR}/dataset/TUM"
+RESULT_DIR="${SCRIPT_DIR}/results/test"
 OUTPUT_TXT="${RESULT_DIR}/tum_results.txt"
 
 mkdir -p "${RESULT_DIR}"
@@ -20,7 +22,7 @@ do
     echo "Processing: TUM ${dataset_name}"
     echo "TUM ${dataset_name}" >> "${OUTPUT_TXT}"
 
-    ../build/bin/dso_dataset \
+    "${REPO_DIR}/build/bin/dso_dataset" \
         files="${DATASET_DIR}/rgb" \
         calib="${DATASET_DIR}/camera.txt" \
         gamma="${DATASET_DIR}/pcalib.txt" \
@@ -30,7 +32,7 @@ do
         mode=1 \
         quiet=1 \
         nogui=1 \
-        cfg_yaml="${HOME}/GSO_SLAM/cfg/gaussian_mapper/Monocular/TUM/tum_${dataset_name}.yaml" \
+        cfg_yaml="${REPO_DIR}/cfg/gaussian_mapper/Monocular/TUM/tum_${dataset_name}.yaml" \
         save_dir="${SAVE_PATH}" \
         use_gaussian_viewer=0
 

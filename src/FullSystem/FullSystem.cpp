@@ -38,6 +38,10 @@
 #include "IOWrapper/ImageDisplay.h"
 #include "util/globalCalib.h"
 #include <Eigen/SVD>
+
+#ifndef GSO_ENABLE_GUI
+#define GSO_ENABLE_GUI 0
+#endif
 #include <Eigen/Eigenvalues>
 #include "FullSystem/PixelSelector.h"
 #include "FullSystem/PixelSelector2.h"
@@ -1871,6 +1875,7 @@ void FullSystem::plotImagesWithCovariances(const std::vector<cv::Mat>& images,
                                            const std::vector<std::vector<std::pair<int, int>>>& imagePointsList,
                                            const std::unordered_map<std::string, std::vector<Eigen::Matrix2f>>& covariancesList,
                                            const std::vector<std::vector<Eigen::Matrix2f>>& allProjectedCovariances) {
+#if GSO_ENABLE_GUI
     for (size_t i = 0; i < images.size(); ++i) {
         cv::Mat displayImage;
         cvtColor(images[i], displayImage, cv::COLOR_GRAY2BGR);
@@ -1894,6 +1899,12 @@ void FullSystem::plotImagesWithCovariances(const std::vector<cv::Mat>& images,
     }
 
     cv::waitKey(0);
+#else
+    (void)images;
+    (void)imagePointsList;
+    (void)covariancesList;
+    (void)allProjectedCovariances;
+#endif
 }
 
 

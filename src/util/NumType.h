@@ -23,6 +23,7 @@
 
 
 #pragma once
+#include <cassert>
 
 #include "Eigen/Core"
 #include "sophus/sim3.hpp"
@@ -192,4 +193,3 @@ struct AffLight
 };
 
 }
-

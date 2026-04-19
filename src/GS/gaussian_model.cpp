@@ -15,6 +15,14 @@
 
 #include "include/gaussian_model.h"
 
+#include <cmath>
+namespace {
+inline void* tensorImplKey(const torch::Tensor& tensor)
+{
+    return tensor.unsafeGetTensorImpl();
+}
+} // namespace
+
 GaussianModel::GaussianModel(const int sh_degree)
     : active_sh_degree_(0), spatial_lr_scale_(0.0),
       lr_delay_steps_(0), lr_delay_mult_(1.0), max_steps_(1000000)
@@ -877,7 +885,7 @@ torch::Tensor GaussianModel::replaceTensorToOptimizer(torch::Tensor& tensor, int
 {
     auto& param = this->optimizer_->param_groups()[tensor_idx].params()[0];
     auto& state = optimizer_->state();
-    auto key = c10::guts::to_string(param.unsafeGetTensorImpl());
+    auto key = tensorImplKey(param);
     auto& stored_state = static_cast<torch::optim::AdamParamState&>(*state[key]);
     auto new_state = std::make_unique<torch::optim::AdamParamState>();
     new_state->step(stored_state.step());
@@ -887,7 +895,7 @@ torch::Tensor GaussianModel::replaceTensorToOptimizer(torch::Tensor& tensor, int
 
     state.erase(key);
     param = tensor.requires_grad_();
-    key = c10::guts::to_string(param.unsafeGetTensorImpl());
+    key = tensorImplKey(param);
     state[key] = std::move(new_state);
 
     auto optimizable_tensors = param;
@@ -904,7 +912,7 @@ void GaussianModel::prunePoints(torch::Tensor& mask)
     auto& state = this->optimizer_->state();
     for (int group_idx = 0; group_idx < 6; ++group_idx) {
         auto& param = param_groups[group_idx].params()[0];
-        auto key = c10::guts::to_string(param.unsafeGetTensorImpl());
+        auto key = tensorImplKey(param);
         if (state.find(key) != state.end()) {
             auto& stored_state = static_cast<torch::optim::AdamParamState&>(*state[key]);
             auto new_state = std::make_unique<torch::optim::AdamParamState>();
@@ -915,7 +923,7 @@ void GaussianModel::prunePoints(torch::Tensor& mask)
 
             state.erase(key);
             param = param.index({valid_points_mask}).requires_grad_();
-            key = c10::guts::to_string(param.unsafeGetTensorImpl());
+            key = tensorImplKey(param);
             state[key] = std::move(new_state);
             optimizable_tensors[group_idx] = param;
         }
@@ -976,24 +984,41 @@ void GaussianModel::densificationPostfix(
         assert(group.params().size() == 1);
         auto& extension_tensor = tensors_dict[group_idx];
         auto& param = group.params()[0];
-        auto key = c10::guts::to_string(param.unsafeGetTensorImpl());
+        auto key = tensorImplKey(param);
         if (state.find(key) != state.end()) {
             auto& stored_state = static_cast<torch::optim::AdamParamState&>(*state[key]);
             auto new_state = std::make_unique<torch::optim::AdamParamState>();
             new_state->step(stored_state.step());
-            new_state->exp_avg(torch::cat({stored_state.exp_avg().clone(), torch::zeros_like(extension_tensor)}, /*dim=*/0));
-            new_state->exp_avg_sq(torch::cat({stored_state.exp_avg_sq().clone(), torch::zeros_like(extension_tensor)}, /*dim=*/0));
+            std::vector<torch::Tensor> exp_avg_tensors;
+            exp_avg_tensors.reserve(2);
+            exp_avg_tensors.push_back(stored_state.exp_avg().clone());
+            exp_avg_tensors.push_back(torch::zeros_like(extension_tensor));
+            new_state->exp_avg(torch::cat(exp_avg_tensors, /*dim=*/0));
+
+            std::vector<torch::Tensor> exp_avg_sq_tensors;
+            exp_avg_sq_tensors.reserve(2);
+            exp_avg_sq_tensors.push_back(stored_state.exp_avg_sq().clone());
+            exp_avg_sq_tensors.push_back(torch::zeros_like(extension_tensor));
+            new_state->exp_avg_sq(torch::cat(exp_avg_sq_tensors, /*dim=*/0));
             // new_state->max_exp_avg_sq(stored_state.max_exp_avg_sq().clone());  // needed only when options.amsgrad(true), which is false by default
 
             state.erase(key);
-            param = torch::cat({param, extension_tensor}, /*dim=*/0).requires_grad_();
-            key = c10::guts::to_string(param.unsafeGetTensorImpl());
+            std::vector<torch::Tensor> merged_tensors;
+            merged_tensors.reserve(2);
+            merged_tensors.push_back(param);
+            merged_tensors.push_back(extension_tensor);
+            param = torch::cat(merged_tensors, /*dim=*/0).requires_grad_();
+            key = tensorImplKey(param);
             state[key] = std::move(new_state);
 
             optimizable_tensors[group_idx] = param;
         }
         else {
-            param = torch::cat({param, extension_tensor}, /*dim=*/0).requires_grad_();
+            std::vector<torch::Tensor> merged_tensors;
+            merged_tensors.reserve(2);
+            merged_tensors.push_back(param);
+            merged_tensors.push_back(extension_tensor);
+            param = torch::cat(merged_tensors, /*dim=*/0).requires_grad_();
             optimizable_tensors[group_idx] = param;
         }
     }
@@ -1438,7 +1463,10 @@ float GaussianModel::exponLrFunc(int step)
 
     float delay_rate;
     if (lr_delay_steps_ > 0)
-        delay_rate = lr_delay_mult_ + (1.0f - lr_delay_mult_) * std::sin(M_PI_2f32 * std::clamp(static_cast<float>(step) / lr_delay_steps_, 0.0f, 1.0f));
+    {
+        constexpr float kHalfPi = 1.5707963267948966f;
+        delay_rate = lr_delay_mult_ + (1.0f - lr_delay_mult_) * std::sin(kHalfPi * std::clamp(static_cast<float>(step) / lr_delay_steps_, 0.0f, 1.0f));
+    }
     else
         delay_rate = 1.0f;
     float t = std::clamp(static_cast<float>(step) / max_steps_, 0.0f, 1.0f);

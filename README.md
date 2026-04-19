@@ -13,11 +13,17 @@
 </div>
 
 ## Environments
+For a JupyterLab or other headless notebook server, build with GUI support disabled and a single CUDA architecture to keep compile memory well below the server limit.
+
+If you are setting up this workspace from scratch, the missing C++ dependencies can be installed into the current conda environment with:
+```bash
+mamba install -y -c conda-forge opencv jsoncpp boost-cpp eigen glm libzip suitesparse
+```
+
 ```bash
 sudo apt-get update && sudo apt-get install -y \
     libsuitesparse-dev libeigen3-dev libboost-all-dev \
-    libglm-dev libjsoncpp-dev libvtk9-dev libpcl-dev \
-    libopencv-dev libglfw3-dev libglew-dev libzip-dev libflann-dev
+    libglm-dev libjsoncpp-dev libopencv-dev libzip-dev
 ```
 Install [CUDA](https://developer.nvidia.com/cuda-11-8-0-download-archive) and [PyTorch](https://pytorch.org/get-started/locally/) respectively.
 We used CUDA Version: 11.8 and PyTorch Version: 2.2.2
@@ -39,9 +45,10 @@ bash preprocess.sh
 ### Build
 ```bash
 mkdir build && cd build
-cmake ..
-make -j$(nproc)
+cmake -DGSO_ENABLE_GUI=OFF -DGSO_ENABLE_RERUN=OFF -DGSO_CUDA_ARCHITECTURES=80 ..
+cmake --build . -j1
 ```
+The headless build is the default in this workspace. If CMake cannot find the conda packages automatically, point `CMAKE_PREFIX_PATH` at `${CONDA_PREFIX}` before configuring.
 ### Replica
 ```bash
 cd experiments_bash
@@ -52,7 +59,7 @@ bash replica.sh
 cd experiments_bash
 bash tum.sh
 ```
-If use_gaussian_viewer is set as 1, gaussian viewer will appear.
+`use_gaussian_viewer=1` is ignored in the headless build.
 
 ## Evaluation
 ```bash

@@ -24,7 +24,8 @@
 
 #pragma once
 
- 
+#include <cassert>
+
 #include "util/NumType.h"
 #include "OptimizationBackend/MatrixAccumulators.h"
 #include "vector"
@@ -165,4 +166,3 @@ private:
 			int min, int max, Vec10* stats, int tid);
 };
 }
-

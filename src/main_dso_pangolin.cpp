@@ -50,17 +50,29 @@
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 
-#include "IOWrapper/Pangolin/PangolinDSOViewer.h"
 #include "IOWrapper/OutputWrapper/SampleOutputWrapper.h"
 
+#ifndef GSO_ENABLE_GUI
+#define GSO_ENABLE_GUI 0
+#endif
+#ifndef GSO_ENABLE_RERUN
+#define GSO_ENABLE_RERUN 0
+#endif
+
+#if GSO_ENABLE_GUI
+#include "IOWrapper/Pangolin/PangolinDSOViewer.h"
+#include "viewer/imgui_viewer.h"
+#endif
+
+#if GSO_ENABLE_RERUN
 #include <rerun.hpp>
+#endif
 #include <sophus/se3.hpp>
 #include <vector>
 #include <string>
 #include <chrono>
 
 #include "include/gaussian_mapper.h"
-#include "viewer/imgui_viewer.h"
 
 std::string vignette = "";
 std::string gammaCalib = "";
@@ -175,8 +187,12 @@ void parseArgument(char* arg)
     {
         if(option==1)
         {
+#if GSO_ENABLE_GUI
             use_gaussian_viewer = true;
             printf("USING Gaussian VIEWER!\n");
+#else
+            printf("Gaussian viewer is disabled in this headless build.\n");
+#endif
         }
         return;
     }
@@ -520,8 +536,7 @@ void saveImage(const std::string& filename, const MinimalImageB3* kf_img, bool i
 		}
 	}
 
-    cv::Mat image(kf_img->h, kf_img->w, CV_8UC3, kf_img->data);
-    cv::imwrite(filename, image);
+    IOWrap::writeImage(filename.c_str(), const_cast<MinimalImageB3*>(kf_img));
 }
 
 
@@ -584,6 +599,7 @@ void saveAffLight(const std::string& filename, AffLight aff_g2l, bool init)
 
 
 
+#if GSO_ENABLE_RERUN
 void rerunVis(const rerun::RecordingStream& rec, const std::vector<FrameHessian*>& keyframeHessians, CalibHessian& HCalib)
 {
     int i = 0;
@@ -675,8 +691,9 @@ void rerunVis(const rerun::RecordingStream& rec, const std::vector<FrameHessian*
 		// 	++j;
         // }
 	++i;
-    }
-}
+	    }
+	}
+#endif
 
 int main( int argc, char** argv )
 {
@@ -760,6 +777,7 @@ int main( int argc, char** argv )
 	training_thd = std::thread(&GaussianMapper::run, pGausMapper.get());
 	// }
 
+#if GSO_ENABLE_GUI
     IOWrap::PangolinDSOViewer* viewer = 0;
 	if(!disableAllDisplay)
     {
@@ -774,6 +792,7 @@ int main( int argc, char** argv )
 		pViewer = std::make_shared<ImGuiViewer>(fullSystem, pGausMapper);
 		viewer_thd = std::thread(&ImGuiViewer::run, pViewer.get());
 	}
+#endif
 
     if(useSampleOutput)
         fullSystem->outputWrapper.push_back(new IOWrap::SampleOutputWrapper());
@@ -1006,8 +1025,10 @@ int main( int argc, char** argv )
 
 	// if (mode == 1 || mode == 2){
 	
+#if GSO_ENABLE_GUI
 	if (use_gaussian_viewer)
 		viewer_thd.join();
+#endif
 	// }
 
 	training_thd.join();

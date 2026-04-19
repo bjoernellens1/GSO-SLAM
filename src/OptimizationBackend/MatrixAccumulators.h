@@ -23,6 +23,7 @@
 
 
 #pragma once
+#include <cassert>
 #include "util/NumType.h"
 
 #if !defined(__SSE3__) && !defined(__SSE2__) && !defined(__SSE1__)
