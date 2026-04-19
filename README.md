@@ -60,6 +60,7 @@ cd experiments_bash
 bash tum.sh
 ```
 `use_gaussian_viewer=1` is ignored in the headless build.
+For TUM data, the loader accepts the raw `rgb.txt` list used by the existing scripts, or a 4-column rgb/depth association file if you want depth paths available. For RGB-D processing, set `SLAM.sensor_type: rgbd` in the scene config and pass the association file.
 
 ## Evaluation
 ```bash

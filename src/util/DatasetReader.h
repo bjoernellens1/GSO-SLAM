@@ -82,25 +82,12 @@ inline int getdir (std::string dir, std::vector<std::string> &files, std::vector
     return files.size();
 }
 
-std::string getRGBorRGBD(const std::string& input) 
-{
-    std::vector<std::string> tokens;
-    std::stringstream ss(input);
-    std::string item;
-
-    while (std::getline(ss, item, '/')) {
-        tokens.push_back(item);
-    }
-
-    if (tokens.size() >= 3) {
-        return tokens[tokens.size() - 3];
-    } else {
-        return "";
-    }
-}
-
-inline int LoadImages(const std::string &datapath, const std::string &strAssociationFilename, 
-                std::vector<std::string> &rgb, std::vector<std::string> &depth)
+inline int LoadImages(
+    const std::string &datapath,
+    const std::string &strAssociationFilename,
+    std::vector<std::string> &rgb,
+    std::vector<std::string> &depth,
+    std::vector<double> &timestamps_foreval)
 {
     std::ifstream fAssociation(strAssociationFilename);
     if (!fAssociation.is_open()) 
@@ -114,15 +101,27 @@ inline int LoadImages(const std::string &datapath, const std::string &strAssocia
     while (std::getline(fAssociation, line)) 
         {
         std::istringstream ss(line);
-        double timestamp;
-            std::string sRGB, sD;
+        double rgb_timestamp;
+        double depth_timestamp;
+        std::string sRGB, sD;
 
-        if (ss >> timestamp >> sRGB >> timestamp >> sD) 
+        if (ss >> rgb_timestamp >> sRGB >> depth_timestamp >> sD) 
 		{
             std::string rgbPath = datapath + "/" + sRGB;
             std::string depthPath = datapath + "/" + sD;
 			rgb.push_back(rgbPath);
 			depth.push_back(depthPath);
+            timestamps_foreval.push_back(rgb_timestamp);
+        }
+        else
+        {
+            std::istringstream ss_rgb(line);
+            if (ss_rgb >> rgb_timestamp >> sRGB)
+            {
+                std::string rgbPath = datapath + "/" + sRGB;
+                rgb.push_back(rgbPath);
+                timestamps_foreval.push_back(rgb_timestamp);
+            }
         }
     }
 	fAssociation.close();
@@ -204,12 +203,7 @@ public:
 			{
 				size_t pos = path.rfind('/');
         		std::string parent_path = path.substr(0, pos);
-				RGBorRGBD = getRGBorRGBD(cfg);
-				if (RGBorRGBD == "RGB-D") 
-				{
-					LoadImages(parent_path, dataAsso, files, depth_files);
-				}
-				else getdir(path, files, timestamps_foreval, true);
+				LoadImages(parent_path, dataAsso, files, depth_files, timestamps_foreval);
 			}
 		}
 		else

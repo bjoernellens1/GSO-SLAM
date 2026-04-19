@@ -159,6 +159,26 @@ std::string escapeJsonString(const std::string& value)
     return escaped;
 }
 
+SystemSensorType parseSensorType(const std::string& raw_value)
+{
+    std::string normalized = trimCopy(raw_value);
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+
+    if (normalized == "monocular" || normalized == "mono") {
+        return MONOCULAR;
+    }
+    if (normalized == "stereo") {
+        return STEREO;
+    }
+    if (normalized == "rgbd" || normalized == "rgb-d") {
+        return RGBD;
+    }
+
+    throw std::runtime_error("[Gaussian Mapper]Unsupported SLAM.sensor_type value: " + raw_value);
+}
+
 } // namespace
 
 GaussianMapper::GaussianMapper(
@@ -178,7 +198,8 @@ GaussianMapper::GaussianMapper(
       min_num_initial_map_kfs_(15UL),
       large_rot_th_(1e-1f),
       large_trans_th_(1e-2f),
-      training_report_interval_(0)
+      training_report_interval_(0),
+      sensor_type_(MONOCULAR)
 {
     // Random seed
     std::srand(seed);
@@ -418,6 +439,11 @@ void GaussianMapper::readConfigFromFile(std::filesystem::path cfg_path)
     rendered_image_viewer_scale_ = getRequiredValue<float>(settings_file, "GaussianViewer.image_scale");
     rendered_image_viewer_scale_main_ = getRequiredValue<float>(settings_file, "GaussianViewer.image_scale_main");
     loc_camera_cfg_path = getOptionalValue<std::string>(settings_file, "Localization.camera_cfg_path", "");
+
+    const auto sensor_type_it = settings_file.find("SLAM.sensor_type");
+    if (sensor_type_it != settings_file.end()) {
+        sensor_type_ = parseSensorType(sensor_type_it->second);
+    }
 }
 
 void GaussianMapper::run()
