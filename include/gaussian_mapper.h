@@ -37,8 +37,6 @@
 #include <opencv2/cudastereo.hpp>
 #include <opencv2/cudawarping.hpp>
 
-#include <jsoncpp/json/json.h>
-
 #include "src/FullSystem/FullSystem.h"
 #include "src/FullSystem/HessianBlocks.h"
 #include "src/FullSystem/ImmaturePoint.h"

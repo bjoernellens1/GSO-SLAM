@@ -19,6 +19,10 @@ bin/
 dataset/Replica/
 dataset/TUM/
 dataset/Scannet/
+dataset/*.zip
+dataset/*.tgz
+dataset/*.tar
+dataset/*.tar.gz
 *.pyc
 __pycache__/
 .ipynb_checkpoints/

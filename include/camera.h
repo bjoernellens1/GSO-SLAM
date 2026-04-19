@@ -90,15 +90,32 @@ public:
 
         if (do_gaus_pyramid_training) {
             assert(!gaus_pyramid_height_.empty() && !gaus_pyramid_width_.empty());
-            cv::cuda::GpuMat undistort_mask_gpu;
-            undistort_mask_gpu.upload(undistort_mask);
             gaus_pyramid_undistort_mask_.resize(num_gaus_pyramid_sub_levels_);
+            const bool use_opencv_cuda = []() {
+                try {
+                    return cv::cuda::getCudaEnabledDeviceCount() > 0;
+                } catch (const cv::Exception&) {
+                    return false;
+                }
+            }();
             for (int l = 0; l < num_gaus_pyramid_sub_levels_; ++l) {
-                cv::cuda::GpuMat undistort_mask_gpu_resized;
-                cv::cuda::resize(undistort_mask_gpu, undistort_mask_gpu_resized,
-                                 cv::Size(gaus_pyramid_width_[l], gaus_pyramid_height_[l]));
-                gaus_pyramid_undistort_mask_[l] =
-                    tensor_utils::cvGpuMat2TorchTensor_Float32(undistort_mask_gpu_resized);
+                cv::Mat undistort_mask_resized;
+                cv::resize(undistort_mask, undistort_mask_resized,
+                           cv::Size(gaus_pyramid_width_[l], gaus_pyramid_height_[l]));
+                if (use_opencv_cuda) {
+                    cv::cuda::GpuMat undistort_mask_gpu;
+                    cv::cuda::GpuMat undistort_mask_gpu_resized;
+                    undistort_mask_gpu.upload(undistort_mask_resized);
+                    cv::cuda::resize(undistort_mask_gpu, undistort_mask_gpu_resized,
+                                     cv::Size(gaus_pyramid_width_[l], gaus_pyramid_height_[l]));
+                    gaus_pyramid_undistort_mask_[l] =
+                        tensor_utils::cvGpuMat2TorchTensor_Float32(undistort_mask_gpu_resized);
+                } else {
+                    gaus_pyramid_undistort_mask_[l] =
+                        tensor_utils::cvMat2TorchTensor_Float32(
+                            undistort_mask_resized,
+                            torch::cuda::is_available() ? torch::kCUDA : torch::kCPU);
+                }
             }
         }
     }

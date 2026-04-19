@@ -32,7 +32,6 @@ find_package(Boost COMPONENTS system thread REQUIRED)
 find_package(Threads REQUIRED)
 find_package(CUDA REQUIRED)
 find_package(glm REQUIRED)
-find_package(jsoncpp CONFIG REQUIRED)
 find_package(OpenCV REQUIRED)
 
 # optional libraries
@@ -91,6 +90,7 @@ include_directories(
   ${EIGEN3_INCLUDE_DIRS}
   ${EIGEN3_INCLUDE_DIR}
   /home/jovyan/work/.gso-build-env/include/eigen3
+  /opt/conda/include
   /opt/conda/targets/x86_64-linux/include
   ${PROJECT_SOURCE_DIR}
 ) 
@@ -221,6 +221,7 @@ endif()
 ##################################################################################
 
 add_library(gaussian_mapper SHARED
+    thirdparty/opencv_cuda_shim/opencv_abi_shim.cpp
     thirdparty/tinyply/tinyply.h
     thirdparty/tinyply/tinyply.cpp
     include/gaussian_keyframe.h
@@ -249,10 +250,16 @@ add_library(gaussian_mapper SHARED
     src/GS/gaussian_scene.cpp
     src/GS/gaussian_trainer.cpp
     src/GS/gaussian_mapper.cpp)
+set_source_files_properties(
+    thirdparty/opencv_cuda_shim/opencv_abi_shim.cpp
+    PROPERTIES COMPILE_FLAGS "-U_GLIBCXX_USE_CXX11_ABI -D_GLIBCXX_USE_CXX11_ABI=1")
+target_include_directories(gaussian_mapper PRIVATE
+    /opt/conda/include)
+target_compile_options(gaussian_mapper PRIVATE
+    -I/opt/conda/include)
 target_link_libraries(gaussian_mapper
     # ${ORB_SLAM3_SOURCE_DIR}/lib/libORB_SLAM3.so
     ${OpenCV_LIBRARIES}
-    jsoncpp_lib
     ${TORCH_LIBRARIES}
     # Eigen3::Eigen
     simple_knn
@@ -274,7 +281,6 @@ if (GSO_ENABLE_GUI)
         gaussian_mapper
         imgui
         ${OpenCV_LIBRARIES}
-        jsoncpp_lib
         ${TORCH_LIBRARIES}
         glm::glm
         glfw

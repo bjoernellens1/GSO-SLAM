@@ -18,6 +18,149 @@
 
 #include "include/gaussian_mapper.h"
 
+#include <algorithm>
+#include <cctype>
+#include <unordered_map>
+
+#ifndef GSO_ENABLE_GUI
+#define GSO_ENABLE_GUI 0
+#endif
+
+namespace {
+
+std::string trimCopy(std::string value)
+{
+    auto not_space = [](unsigned char c) { return !std::isspace(c); };
+    value.erase(value.begin(), std::find_if(value.begin(), value.end(), not_space));
+    value.erase(std::find_if(value.rbegin(), value.rend(), not_space).base(), value.end());
+    return value;
+}
+
+std::string stripInlineComment(std::string value)
+{
+    const std::size_t comment_pos = value.find('#');
+    if (comment_pos != std::string::npos) {
+        value = value.substr(0, comment_pos);
+    }
+    return trimCopy(std::move(value));
+}
+
+std::unordered_map<std::string, std::string> loadScalarMap(const std::filesystem::path& path)
+{
+    std::ifstream in(path);
+    if (!in.good()) {
+        throw std::runtime_error("[Gaussian Mapper]Failed to open settings file at: " + path.string());
+    }
+
+    std::unordered_map<std::string, std::string> values;
+    std::string line;
+    while (std::getline(in, line)) {
+        line = trimCopy(stripInlineComment(std::move(line)));
+        if (line.empty() || line == "---" || line == "...") {
+            continue;
+        }
+        if (line.front() == '%' || line.front() == '#') {
+            continue;
+        }
+
+        const std::size_t colon_pos = line.find(':');
+        if (colon_pos == std::string::npos) {
+            continue;
+        }
+
+        std::string key = trimCopy(line.substr(0, colon_pos));
+        std::string value = trimCopy(line.substr(colon_pos + 1));
+        if (key.empty() || value.empty()) {
+            continue;
+        }
+        if (value.size() >= 2 && ((value.front() == '"' && value.back() == '"') ||
+                                  (value.front() == '\'' && value.back() == '\''))) {
+            value = value.substr(1, value.size() - 2);
+        }
+        values.emplace(std::move(key), std::move(value));
+    }
+
+    return values;
+}
+
+template <typename T>
+T parseScalar(const std::string& value)
+{
+    std::stringstream ss(value);
+    T parsed{};
+    ss >> parsed;
+    if (ss.fail()) {
+        throw std::runtime_error("[Gaussian Mapper]Failed to parse scalar value: " + value);
+    }
+    return parsed;
+}
+
+template <>
+std::string parseScalar<std::string>(const std::string& value)
+{
+    return trimCopy(value);
+}
+
+template <>
+bool parseScalar<bool>(const std::string& value)
+{
+    std::string normalized = trimCopy(value);
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on";
+}
+
+template <typename T>
+T getRequiredValue(const std::unordered_map<std::string, std::string>& values, const char* key)
+{
+    auto it = values.find(key);
+    if (it == values.end()) {
+        throw std::runtime_error(std::string("[Gaussian Mapper]Missing config key: ") + key);
+    }
+    return parseScalar<T>(it->second);
+}
+
+template <typename T>
+T getOptionalValue(const std::unordered_map<std::string, std::string>& values, const char* key, T default_value)
+{
+    auto it = values.find(key);
+    if (it == values.end() || it->second.empty()) {
+        return default_value;
+    }
+    return parseScalar<T>(it->second);
+}
+
+bool hasOpenCVCuda()
+{
+    try {
+        return cv::cuda::getCudaEnabledDeviceCount() > 0;
+    } catch (const cv::Exception&) {
+        return false;
+    }
+}
+
+std::string escapeJsonString(const std::string& value)
+{
+    std::string escaped;
+    escaped.reserve(value.size() + 8);
+    for (char ch : value) {
+        switch (ch) {
+        case '\\': escaped += "\\\\"; break;
+        case '"': escaped += "\\\""; break;
+        case '\b': escaped += "\\b"; break;
+        case '\f': escaped += "\\f"; break;
+        case '\n': escaped += "\\n"; break;
+        case '\r': escaped += "\\r"; break;
+        case '\t': escaped += "\\t"; break;
+        default: escaped.push_back(ch); break;
+        }
+    }
+    return escaped;
+}
+
+} // namespace
+
 GaussianMapper::GaussianMapper(
     std::shared_ptr<dso::FullSystem> pSLAM,
     std::filesystem::path gaussian_config_file_path,
@@ -150,7 +293,7 @@ GaussianMapper::GaussianMapper(
     // if (this->sensor_type_ == MONOCULAR || this->sensor_type_ == RGBD)
     undistort_params.dist_coeff_.copyTo(camera.dist_coeff_);
 
-    camera.initUndistortRectifyMapAndMask(K, SLAM_im_size, K_new, true);
+    camera.initUndistortRectifyMapAndMask(K, SLAM_im_size, K_new, do_gaus_pyramid_training_);
 
     undistort_mask_[camera.camera_id_] =
         tensor_utils::cvMat2TorchTensor_Float32(
@@ -184,104 +327,55 @@ GaussianMapper::GaussianMapper(
 
 void GaussianMapper::readConfigFromFile(std::filesystem::path cfg_path)
 {
-    cv::FileStorage settings_file(cfg_path.string().c_str(), cv::FileStorage::READ);
-    if(!settings_file.isOpened()) {
-       std::cerr << "[Gaussian Mapper]Failed to open settings file at: " << cfg_path << std::endl;
-       exit(-1);
-    }
+    const auto settings_file = loadScalarMap(cfg_path);
 
     std::cout << "[Gaussian Mapper]Reading parameters from " << cfg_path << std::endl;
     std::unique_lock<std::mutex> lock(mutex_settings_);
 
-    // SLAM parameters
-    image_width = 
-        settings_file["SLAM.image_width"].operator int();
-    image_height = 
-        settings_file["SLAM.image_height"].operator int();
-    distortion_k1 =
-        settings_file["SLAM.distortion_k1"].operator float();
-    distortion_k2 =
-        settings_file["SLAM.distortion_k2"].operator float();
-    distortion_p1 =
-        settings_file["SLAM.distortion_p1"].operator float();
-    distortion_p2 =
-        settings_file["SLAM.distortion_p2"].operator float();
-    distortion_k3 =
-        settings_file["SLAM.distortion_k3"].operator float();
-    // depth_scale =
-    //     settings_file["SLAM.depth_scale"].operator float();
-    mapping_fx =
-        settings_file["Mapper.fx"].operator float();
-    mapping_fy =
-        settings_file["Mapper.fy"].operator float();
-    mapping_cx =
-        settings_file["Mapper.cx"].operator float();
-    mapping_cy =
-        settings_file["Mapper.cy"].operator float();
+    image_width = getRequiredValue<int>(settings_file, "SLAM.image_width");
+    image_height = getRequiredValue<int>(settings_file, "SLAM.image_height");
+    distortion_k1 = getRequiredValue<float>(settings_file, "SLAM.distortion_k1");
+    distortion_k2 = getRequiredValue<float>(settings_file, "SLAM.distortion_k2");
+    distortion_p1 = getRequiredValue<float>(settings_file, "SLAM.distortion_p1");
+    distortion_p2 = getRequiredValue<float>(settings_file, "SLAM.distortion_p2");
+    distortion_k3 = getRequiredValue<float>(settings_file, "SLAM.distortion_k3");
+    mapping_fx = getRequiredValue<float>(settings_file, "Mapper.fx");
+    mapping_fy = getRequiredValue<float>(settings_file, "Mapper.fy");
+    mapping_cx = getRequiredValue<float>(settings_file, "Mapper.cx");
+    mapping_cy = getRequiredValue<float>(settings_file, "Mapper.cy");
+    lambda_sparse_depth = getRequiredValue<float>(settings_file, "Mapper.lambda_sparse_depth");
 
-    // added
-    lambda_sparse_depth =
-        settings_file["Mapper.lambda_sparse_depth"].operator float();
+    model_params_.sh_degree_ = getRequiredValue<int>(settings_file, "Model.sh_degree");
+    model_params_.resolution_ = getRequiredValue<float>(settings_file, "Model.resolution");
+    model_params_.white_background_ = getRequiredValue<int>(settings_file, "Model.white_background") != 0;
+    model_params_.eval_ = getRequiredValue<int>(settings_file, "Model.eval") != 0;
 
-    // Model parameters
-    model_params_.sh_degree_ =
-        settings_file["Model.sh_degree"].operator int();
-    model_params_.resolution_ =
-        settings_file["Model.resolution"].operator float();
-    model_params_.white_background_ =
-        (settings_file["Model.white_background"].operator int()) != 0;
-    model_params_.eval_ =
-        (settings_file["Model.eval"].operator int()) != 0;
+    z_near_ = getRequiredValue<float>(settings_file, "Camera.z_near");
+    z_far_ = getRequiredValue<float>(settings_file, "Camera.z_far");
 
-    // Pipeline Parameters
-    z_near_ =
-        settings_file["Camera.z_near"].operator float();
-    z_far_ =
-        settings_file["Camera.z_far"].operator float();
+    monocular_inactive_geo_densify_max_pixel_dist_ = getRequiredValue<float>(settings_file, "Monocular.inactive_geo_densify_max_pixel_dist");
+    stereo_min_disparity_ = getRequiredValue<int>(settings_file, "Stereo.min_disparity");
+    stereo_num_disparity_ = getRequiredValue<int>(settings_file, "Stereo.num_disparity");
+    RGBD_min_depth_ = getRequiredValue<float>(settings_file, "RGBD.min_depth");
+    RGBD_max_depth_ = getRequiredValue<float>(settings_file, "RGBD.max_depth");
 
-    monocular_inactive_geo_densify_max_pixel_dist_ =
-        settings_file["Monocular.inactive_geo_densify_max_pixel_dist"].operator float();
-    stereo_min_disparity_ =
-        settings_file["Stereo.min_disparity"].operator int();
-    stereo_num_disparity_ =
-        settings_file["Stereo.num_disparity"].operator int();
-    RGBD_min_depth_ =
-        settings_file["RGBD.min_depth"].operator float();
-    RGBD_max_depth_ =
-        settings_file["RGBD.max_depth"].operator float();
+    inactive_geo_densify_ = getRequiredValue<int>(settings_file, "Mapper.inactive_geo_densify") != 0;
+    max_depth_cached_ = getRequiredValue<int>(settings_file, "Mapper.depth_cache");
+    min_num_initial_map_kfs_ = static_cast<unsigned long>(getRequiredValue<int>(settings_file, "Mapper.min_num_initial_map_kfs"));
+    new_keyframe_times_of_use_ = getRequiredValue<int>(settings_file, "Mapper.new_keyframe_times_of_use");
+    local_BA_increased_times_of_use_ = getRequiredValue<int>(settings_file, "Mapper.local_BA_increased_times_of_use");
+    loop_closure_increased_times_of_use_ = getRequiredValue<int>(settings_file, "Mapper.loop_closure_increased_times_of_use_");
+    cull_keyframes_ = getRequiredValue<int>(settings_file, "Mapper.cull_keyframes") != 0;
+    large_rot_th_ = getRequiredValue<float>(settings_file, "Mapper.large_rotation_threshold");
+    large_trans_th_ = getRequiredValue<float>(settings_file, "Mapper.large_translation_threshold");
+    stable_num_iter_existence_ = getRequiredValue<int>(settings_file, "Mapper.stable_num_iter_existence");
 
-    inactive_geo_densify_ =
-        (settings_file["Mapper.inactive_geo_densify"].operator int()) != 0;
-    max_depth_cached_ =
-        settings_file["Mapper.depth_cache"].operator int();
-    min_num_initial_map_kfs_ = 
-        static_cast<unsigned long>(settings_file["Mapper.min_num_initial_map_kfs"].operator int());
-    new_keyframe_times_of_use_ = 
-        settings_file["Mapper.new_keyframe_times_of_use"].operator int();
-    local_BA_increased_times_of_use_ = 
-        settings_file["Mapper.local_BA_increased_times_of_use"].operator int();
-    loop_closure_increased_times_of_use_ = 
-        settings_file["Mapper.loop_closure_increased_times_of_use_"].operator int();
-    cull_keyframes_ =
-        (settings_file["Mapper.cull_keyframes"].operator int()) != 0;
-    large_rot_th_ =
-        settings_file["Mapper.large_rotation_threshold"].operator float();
-    large_trans_th_ =
-        settings_file["Mapper.large_translation_threshold"].operator float();
-    stable_num_iter_existence_ =
-        settings_file["Mapper.stable_num_iter_existence"].operator int();
+    pipe_params_.convert_SHs_ = getRequiredValue<int>(settings_file, "Pipeline.convert_SHs") != 0;
+    pipe_params_.compute_cov3D_ = getRequiredValue<int>(settings_file, "Pipeline.compute_cov3D") != 0;
 
-    pipe_params_.convert_SHs_ =
-        (settings_file["Pipeline.convert_SHs"].operator int()) != 0;
-    pipe_params_.compute_cov3D_ =
-        (settings_file["Pipeline.compute_cov3D"].operator int()) != 0;
-
-    do_gaus_pyramid_training_ =
-        (settings_file["GausPyramid.do"].operator int()) != 0;
-    num_gaus_pyramid_sub_levels_ =
-        settings_file["GausPyramid.num_sub_levels"].operator int();
-    int sub_level_times_of_use =
-        settings_file["GausPyramid.sub_level_times_of_use"].operator int();
+    do_gaus_pyramid_training_ = getRequiredValue<int>(settings_file, "GausPyramid.do") != 0;
+    num_gaus_pyramid_sub_levels_ = getRequiredValue<int>(settings_file, "GausPyramid.num_sub_levels");
+    int sub_level_times_of_use = getRequiredValue<int>(settings_file, "GausPyramid.sub_level_times_of_use");
     kf_gaus_pyramid_times_of_use_.resize(num_gaus_pyramid_sub_levels_);
     kf_gaus_pyramid_factors_.resize(num_gaus_pyramid_sub_levels_);
     for (int l = 0; l < num_gaus_pyramid_sub_levels_; ++l) {
@@ -289,72 +383,41 @@ void GaussianMapper::readConfigFromFile(std::filesystem::path cfg_path)
         kf_gaus_pyramid_factors_[l] = std::pow(0.5f, num_gaus_pyramid_sub_levels_ - l);
     }
 
-    keyframe_record_interval_ = 
-        settings_file["Record.keyframe_record_interval"].operator int();
-    all_keyframes_record_interval_ = 
-        settings_file["Record.all_keyframes_record_interval"].operator int();
-    record_rendered_image_ = 
-        (settings_file["Record.record_rendered_image"].operator int()) != 0;
-    record_ground_truth_image_ = 
-        (settings_file["Record.record_ground_truth_image"].operator int()) != 0;
-    record_loss_image_ = 
-        (settings_file["Record.record_loss_image"].operator int()) != 0;
-    record_depth_image_ = 
-        (settings_file["Record.record_depth_image"].operator int()) != 0;
-    training_report_interval_ = 
-        settings_file["Record.training_report_interval"].operator int();
-    record_loop_ply_ =
-        (settings_file["Record.record_loop_ply"].operator int()) != 0;
+    keyframe_record_interval_ = getRequiredValue<int>(settings_file, "Record.keyframe_record_interval");
+    all_keyframes_record_interval_ = getRequiredValue<int>(settings_file, "Record.all_keyframes_record_interval");
+    record_rendered_image_ = getRequiredValue<int>(settings_file, "Record.record_rendered_image") != 0;
+    record_ground_truth_image_ = getRequiredValue<int>(settings_file, "Record.record_ground_truth_image") != 0;
+    record_loss_image_ = getRequiredValue<int>(settings_file, "Record.record_loss_image") != 0;
+    record_depth_image_ = getRequiredValue<int>(settings_file, "Record.record_depth_image") != 0;
+    training_report_interval_ = getRequiredValue<int>(settings_file, "Record.training_report_interval");
+    record_loop_ply_ = getRequiredValue<int>(settings_file, "Record.record_loop_ply") != 0;
 
-    // Optimization Parameters
-    opt_params_.iterations_ =
-        settings_file["Optimization.max_num_iterations"].operator int();
-    opt_params_.position_lr_init_ =
-        settings_file["Optimization.position_lr_init"].operator float();
-    opt_params_.position_lr_final_ =
-        settings_file["Optimization.position_lr_final"].operator float();
-    opt_params_.position_lr_delay_mult_ =
-        settings_file["Optimization.position_lr_delay_mult"].operator float();
-    opt_params_.position_lr_max_steps_ =
-        settings_file["Optimization.position_lr_max_steps"].operator int();
-    opt_params_.feature_lr_ =
-        settings_file["Optimization.feature_lr"].operator float();
-    opt_params_.opacity_lr_ =
-        settings_file["Optimization.opacity_lr"].operator float();
-    opt_params_.scaling_lr_ =
-        settings_file["Optimization.scaling_lr"].operator float();
-    opt_params_.rotation_lr_ =
-        settings_file["Optimization.rotation_lr"].operator float();
+    opt_params_.iterations_ = getRequiredValue<int>(settings_file, "Optimization.max_num_iterations");
+    opt_params_.position_lr_init_ = getRequiredValue<float>(settings_file, "Optimization.position_lr_init");
+    opt_params_.position_lr_final_ = getRequiredValue<float>(settings_file, "Optimization.position_lr_final");
+    opt_params_.position_lr_delay_mult_ = getRequiredValue<float>(settings_file, "Optimization.position_lr_delay_mult");
+    opt_params_.position_lr_max_steps_ = getRequiredValue<int>(settings_file, "Optimization.position_lr_max_steps");
+    opt_params_.feature_lr_ = getRequiredValue<float>(settings_file, "Optimization.feature_lr");
+    opt_params_.opacity_lr_ = getRequiredValue<float>(settings_file, "Optimization.opacity_lr");
+    opt_params_.scaling_lr_ = getRequiredValue<float>(settings_file, "Optimization.scaling_lr");
+    opt_params_.rotation_lr_ = getRequiredValue<float>(settings_file, "Optimization.rotation_lr");
 
-    opt_params_.percent_dense_ =
-        settings_file["Optimization.percent_dense"].operator float();
-    opt_params_.lambda_dssim_ =
-        settings_file["Optimization.lambda_dssim"].operator float();
-    opt_params_.densification_interval_ =
-        settings_file["Optimization.densification_interval"].operator int();
-    opt_params_.opacity_reset_interval_ =
-        settings_file["Optimization.opacity_reset_interval"].operator int();
-    opt_params_.densify_from_iter_ =
-        settings_file["Optimization.densify_from_iter_"].operator int();
-    opt_params_.densify_until_iter_ =
-        settings_file["Optimization.densify_until_iter"].operator int();
-    opt_params_.densify_grad_threshold_ =
-        settings_file["Optimization.densify_grad_threshold"].operator float();
+    opt_params_.percent_dense_ = getRequiredValue<float>(settings_file, "Optimization.percent_dense");
+    opt_params_.lambda_dssim_ = getRequiredValue<float>(settings_file, "Optimization.lambda_dssim");
+    opt_params_.densification_interval_ = getRequiredValue<int>(settings_file, "Optimization.densification_interval");
+    opt_params_.opacity_reset_interval_ = getRequiredValue<int>(settings_file, "Optimization.opacity_reset_interval");
+    opt_params_.densify_from_iter_ = getRequiredValue<int>(
+        settings_file,
+        settings_file.count("Optimization.densify_from_iter") ? "Optimization.densify_from_iter" : "Optimization.densify_from_iter_");
+    opt_params_.densify_until_iter_ = getRequiredValue<int>(settings_file, "Optimization.densify_until_iter");
+    opt_params_.densify_grad_threshold_ = getRequiredValue<float>(settings_file, "Optimization.densify_grad_threshold");
 
-    prune_big_point_after_iter_ =
-        settings_file["Optimization.prune_big_point_after_iter"].operator int();
-    densify_min_opacity_ =
-        settings_file["Optimization.densify_min_opacity"].operator float();
+    prune_big_point_after_iter_ = getRequiredValue<int>(settings_file, "Optimization.prune_big_point_after_iter");
+    densify_min_opacity_ = getRequiredValue<float>(settings_file, "Optimization.densify_min_opacity");
 
-    // Viewer Parameters
-    rendered_image_viewer_scale_ =
-        settings_file["GaussianViewer.image_scale"].operator float();
-    rendered_image_viewer_scale_main_ =
-        settings_file["GaussianViewer.image_scale_main"].operator float();
-
-    // Localization
-    loc_camera_cfg_path =
-        settings_file["Localization.camera_cfg_path"].operator std::string();
+    rendered_image_viewer_scale_ = getRequiredValue<float>(settings_file, "GaussianViewer.image_scale");
+    rendered_image_viewer_scale_main_ = getRequiredValue<float>(settings_file, "GaussianViewer.image_scale_main");
+    loc_camera_cfg_path = getOptionalValue<std::string>(settings_file, "Localization.camera_cfg_path", "");
 }
 
 void GaussianMapper::run()
@@ -504,7 +567,7 @@ void GaussianMapper::run()
             // Prepare multi resolution images for training
             for (auto& kfit : scene_->keyframes()) {
                 auto pkf = kfit.second;
-                if (device_type_ == torch::kCUDA) {
+                if (device_type_ == torch::kCUDA && hasOpenCVCuda()) {
                     cv::cuda::GpuMat img_gpu;
                     img_gpu.upload(pkf->img_undist_);
                     pkf->gaus_pyramid_original_image_.resize(num_gaus_pyramid_sub_levels_);
@@ -619,7 +682,7 @@ void GaussianMapper::trainColmap()
     for (auto& kfit : scene_->keyframes()) {
         auto pkf = kfit.second;
         increaseKeyframeTimesOfUse(pkf, newKeyframeTimesOfUse());
-        if (device_type_ == torch::kCUDA) {
+        if (device_type_ == torch::kCUDA && hasOpenCVCuda()) {
             cv::cuda::GpuMat img_gpu;
             img_gpu.upload(pkf->img_undist_);
             pkf->gaus_pyramid_original_image_.resize(num_gaus_pyramid_sub_levels_);
@@ -1076,7 +1139,7 @@ void GaussianMapper::combineMappingOperations()
             new_kf->img_undist_ = imgRGB_undistorted;
             new_kf->img_auxiliary_undist_ = imgAux_undistorted;
             // Prepare multi resolution images for training
-            if (device_type_ == torch::kCUDA) {
+            if (device_type_ == torch::kCUDA && hasOpenCVCuda()) {
                 cv::cuda::GpuMat img_gpu;
                 img_gpu.upload(new_kf->img_undist_);
                 new_kf->gaus_pyramid_original_image_.resize(num_gaus_pyramid_sub_levels_);
@@ -1203,7 +1266,7 @@ void GaussianMapper::handleNewKeyframe(
         increasePcdByKeyframeInactiveGeoDensify(pkf);
 
     // Prepare multi resolution images for training
-    if (device_type_ == torch::kCUDA) {
+    if (device_type_ == torch::kCUDA && hasOpenCVCuda()) {
         cv::cuda::GpuMat img_gpu;
         img_gpu.upload(pkf->img_undist_);
         pkf->gaus_pyramid_original_image_.resize(num_gaus_pyramid_sub_levels_);
@@ -1680,6 +1743,7 @@ void GaussianMapper::recordKeyframeRendered(
         std::filesystem::path result_depth_dir,
         std::string name_suffix)
 {
+#if GSO_ENABLE_GUI
     if (record_rendered_image_) {
         auto image_cv = tensor_utils::torchTensor2CvMat_Float32(rendered);
         // cv::cvtColor(image_cv, image_cv, CV_RGB2BGR);
@@ -1723,6 +1787,17 @@ void GaussianMapper::recordKeyframeRendered(
         depth_clipped.convertTo(depth_clipped, CV_16U);
         cv::imwrite(result_depth_dir / (std::to_string(getIteration()) + "_" + std::to_string(kfid) + name_suffix + ".png"), depth_clipped);
     }
+#else
+    (void)rendered;
+    (void)ground_truth;
+    (void)depth_map;
+    (void)kfid;
+    (void)result_img_dir;
+    (void)result_gt_dir;
+    (void)result_loss_dir;
+    (void)result_depth_dir;
+    (void)name_suffix;
+#endif
 }
 
 cv::Mat GaussianMapper::renderFromPose(
@@ -2158,11 +2233,8 @@ void GaussianMapper::keyframesToJson(std::filesystem::path result_dir)
     if (!out_stream.is_open())
         throw std::runtime_error("Cannot open json file at " + result_path.string());
 
-    Json::Value json_root;
-    Json::StreamWriterBuilder builder;
-    const std::unique_ptr<Json::StreamWriter> writer(builder.newStreamWriter());
-
-    int i = 0;
+    out_stream << "[\n";
+    bool first_entry = true;
     for (const auto& kfit : scene_->keyframes()) {
         const auto pkf = kfit.second;
         Eigen::Matrix4f Rt;
@@ -2177,34 +2249,27 @@ void GaussianMapper::keyframesToJson(std::filesystem::path result_dir)
         Eigen::Vector3f pos = Twc.block<3, 1>(0, 3);
         Eigen::Matrix3f rot = Twc.block<3, 3>(0, 0);
 
-        Json::Value json_kf;
-        json_kf["id"] = static_cast<Json::Value::UInt64>(pkf->fid_);
-        json_kf["img_name"] = pkf->img_filename_; //(std::to_string(getIteration()) + "_" + std::to_string(pkf->fid_));
-        json_kf["width"] = pkf->image_width_;
-        json_kf["height"] = pkf->image_height_;
-
-        json_kf["position"][0] = pos.x();
-        json_kf["position"][1] = pos.y();
-        json_kf["position"][2] = pos.z();
-
-        json_kf["rotation"][0][0] = rot(0, 0);
-        json_kf["rotation"][0][1] = rot(0, 1);
-        json_kf["rotation"][0][2] = rot(0, 2);
-        json_kf["rotation"][1][0] = rot(1, 0);
-        json_kf["rotation"][1][1] = rot(1, 1);
-        json_kf["rotation"][1][2] = rot(1, 2);
-        json_kf["rotation"][2][0] = rot(2, 0);
-        json_kf["rotation"][2][1] = rot(2, 1);
-        json_kf["rotation"][2][2] = rot(2, 2);
-
-        json_kf["fy"] = graphics_utils::fov2focal(pkf->FoVy_, pkf->image_height_);
-        json_kf["fx"] = graphics_utils::fov2focal(pkf->FoVx_, pkf->image_width_);
-
-        json_root[i] = Json::Value(json_kf);
-        ++i;
+        if (!first_entry) {
+            out_stream << ",\n";
+        }
+        first_entry = false;
+        out_stream << "  {\n"
+                   << "    \"id\": " << pkf->fid_ << ",\n"
+                   << "    \"img_name\": \"" << escapeJsonString(pkf->img_filename_) << "\",\n"
+                   << "    \"width\": " << pkf->image_width_ << ",\n"
+                   << "    \"height\": " << pkf->image_height_ << ",\n"
+                   << "    \"position\": [" << pos.x() << ", " << pos.y() << ", " << pos.z() << "],\n"
+                   << "    \"rotation\": [\n"
+                   << "      [" << rot(0, 0) << ", " << rot(0, 1) << ", " << rot(0, 2) << "],\n"
+                   << "      [" << rot(1, 0) << ", " << rot(1, 1) << ", " << rot(1, 2) << "],\n"
+                   << "      [" << rot(2, 0) << ", " << rot(2, 1) << ", " << rot(2, 2) << "]\n"
+                   << "    ],\n"
+                   << "    \"fy\": " << graphics_utils::fov2focal(pkf->FoVy_, pkf->image_height_) << ",\n"
+                   << "    \"fx\": " << graphics_utils::fov2focal(pkf->FoVx_, pkf->image_width_) << "\n"
+                   << "  }";
     }
 
-    writer->write(json_root, &out_stream);
+    out_stream << "\n]\n";
 }
 
 void GaussianMapper::saveModelParams(std::filesystem::path result_dir)
@@ -2462,29 +2527,29 @@ void GaussianMapper::loadPly(std::filesystem::path ply_path, std::filesystem::pa
 
     // Camera
     if (!camera_path.empty() && std::filesystem::exists(camera_path)) {
-        cv::FileStorage camera_file(camera_path.string().c_str(), cv::FileStorage::READ);
-        if(!camera_file.isOpened())
-            throw std::runtime_error("[Gaussian Mapper]Failed to open settings file at: " + camera_path.string());
-
         Camera camera;
         camera.camera_id_ = 0;
-        camera.width_ = camera_file["Camera.w"].operator int();
-        camera.height_ = camera_file["Camera.h"].operator int();
+        const auto camera_values = loadScalarMap(camera_path);
 
-        std::string camera_type = camera_file["Camera.type"].string();
-        if (camera_type == "Pinhole") {
+        if (!camera_values.empty()) {
+            const std::string camera_type = getRequiredValue<std::string>(camera_values, "Camera.type");
+            if (camera_type != "Pinhole") {
+                throw std::runtime_error("[Gaussian Mapper]Unsupported camera model: " + camera_type);
+            }
+
             camera.setModelId(Camera::CameraModelType::PINHOLE);
+            camera.width_ = getRequiredValue<int>(camera_values, "Camera.w");
+            camera.height_ = getRequiredValue<int>(camera_values, "Camera.h");
 
-            float fx = camera_file["Camera.fx"].operator float();
-            float fy = camera_file["Camera.fy"].operator float();
-            float cx = camera_file["Camera.cx"].operator float();
-            float cy = camera_file["Camera.cy"].operator float();
-
-            float k1 = camera_file["Camera.k1"].operator float();
-            float k2 = camera_file["Camera.k2"].operator float();
-            float p1 = camera_file["Camera.p1"].operator float();
-            float p2 = camera_file["Camera.p2"].operator float();
-            float k3 = camera_file["Camera.k3"].operator float();
+            const float fx = getRequiredValue<float>(camera_values, "Camera.fx");
+            const float fy = getRequiredValue<float>(camera_values, "Camera.fy");
+            const float cx = getRequiredValue<float>(camera_values, "Camera.cx");
+            const float cy = getRequiredValue<float>(camera_values, "Camera.cy");
+            const float k1 = getRequiredValue<float>(camera_values, "Camera.k1");
+            const float k2 = getRequiredValue<float>(camera_values, "Camera.k2");
+            const float p1 = getRequiredValue<float>(camera_values, "Camera.p1");
+            const float p2 = getRequiredValue<float>(camera_values, "Camera.p2");
+            const float k3 = getRequiredValue<float>(camera_values, "Camera.k3");
 
             cv::Mat K = (
                 cv::Mat_<float>(3, 3)
@@ -2514,10 +2579,44 @@ void GaussianMapper::loadPly(std::filesystem::path ply_path, std::filesystem::pa
             viewer_main_undistort_mask_[camera.camera_id_] =
                 tensor_utils::cvMat2TorchTensor_Float32(
                     viewer_main_undistort_mask, device_type_);
+        } else {
+            std::ifstream camera_stream(camera_path);
+            if (!camera_stream.good()) {
+                throw std::runtime_error("[Gaussian Mapper]Failed to open camera file at: " + camera_path.string());
+            }
 
-        }
-        else {
-            throw std::runtime_error("[Gaussian Mapper]Unsupported camera model: " + camera_path.string());
+            std::string model_name;
+            float fx = 0.f, fy = 0.f, cx = 0.f, cy = 0.f, k1 = 0.f, k2 = 0.f, k3 = 0.f, p1 = 0.f, p2 = 0.f;
+            int width = 0, height = 0;
+            camera_stream >> model_name >> fx >> fy >> cx >> cy >> k1 >> k2 >> k3 >> p1 >> p2;
+            camera_stream >> width >> height;
+
+            if (model_name.empty() || width <= 0 || height <= 0) {
+                throw std::runtime_error("[Gaussian Mapper]Unsupported camera file format: " + camera_path.string());
+            }
+
+            camera.setModelId(Camera::CameraModelType::PINHOLE);
+            camera.width_ = width;
+            camera.height_ = height;
+            camera.params_[0] = fx;
+            camera.params_[1] = fy;
+            camera.params_[2] = cx;
+            camera.params_[3] = cy;
+
+            cv::Mat K = (
+                cv::Mat_<float>(3, 3)
+                    << fx, 0.f, cx,
+                        0.f, fy, cy,
+                        0.f, 0.f, 1.f
+            );
+
+            std::vector<float> dist_coeff = {k1, k2, p1, p2, k3};
+            camera.dist_coeff_ = cv::Mat(5, 1, CV_32F, dist_coeff.data());
+            camera.initUndistortRectifyMapAndMask(K, cv::Size(camera.width_, camera.height_), K, false);
+
+            undistort_mask_[camera.camera_id_] =
+                tensor_utils::cvMat2TorchTensor_Float32(
+                    camera.undistort_mask, device_type_);
         }
 
         if (!viewer_camera_id_set_) {
