@@ -54,6 +54,8 @@
     this->max_radii2D_ = torch::empty(0, torch::TensorOptions().device(device_type));        \
     this->xyz_gradient_accum_ = torch::empty(0, torch::TensorOptions().device(device_type)); \
     this->denom_ = torch::empty(0, torch::TensorOptions().device(device_type));              \
+    this->support_hits_ = torch::empty(0, torch::TensorOptions().device(device_type));       \
+    this->free_space_hits_ = torch::empty(0, torch::TensorOptions().device(device_type));    \
     GAUSSIAN_MODEL_TENSORS_TO_VEC
 
 class GaussianModel
@@ -155,6 +157,19 @@ public:
         torch::Tensor& viewspace_point_tensor,
         torch::Tensor& update_filter);
 
+    void recordDepthEvidence(
+        torch::Tensor& support_mask,
+        torch::Tensor& free_space_mask);
+
+    void pruneByDepthEvidence(
+        int current_iter,
+        float scene_extent,
+        int min_support_hits,
+        int min_free_space_hits,
+        int min_age,
+        float max_anisotropy_ratio,
+        float max_scale_fraction);
+
 // void increasePointsIterationsOfExistence(const int i = 1);
 
     void loadPly(std::filesystem::path ply_path);
@@ -183,6 +198,8 @@ public:
     torch::Tensor xyz_gradient_accum_;
     torch::Tensor denom_;
     torch::Tensor exist_since_iter_;
+    torch::Tensor support_hits_;
+    torch::Tensor free_space_hits_;
 
     std::vector<torch::Tensor> Tensor_vec_xyz_,
                                Tensor_vec_feature_dc_,

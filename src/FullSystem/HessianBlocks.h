@@ -26,6 +26,7 @@
 #define MAX_ACTIVE_FRAMES 100
 
 #include <cassert>
+#include <cstdint>
 
 #include "util/globalCalib.h"
 #include "vector"
@@ -522,6 +523,7 @@ struct FrozenFrameHessian
 	std::vector<float> colors;
 	std::vector<float> scales;
 	std::vector<float> rots;
+	std::vector<uint8_t> pointSupportLevels; // 2 = active, 1 = marginalized
 };
 
 

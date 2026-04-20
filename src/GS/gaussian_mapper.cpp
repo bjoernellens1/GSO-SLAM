@@ -194,6 +194,72 @@ void writePngImage(const cv::Mat& image, const std::filesystem::path& path, bool
     std::fclose(fp);
 }
 
+void appendSeedGeometry(
+    const dso::FrozenFrameHessian* fh,
+    const bool use_imported_seed_geometry,
+    const bool seed_only_active_points,
+    const float seed_isotropic_scale,
+    std::vector<float>& new_points,
+    std::vector<float>& new_colors,
+    std::vector<float>& new_scales,
+    std::vector<float>& new_rots)
+{
+    const std::size_t num_points = fh->pointsInWorld.size() / 3;
+    const bool have_support_levels = fh->pointSupportLevels.size() == num_points;
+    const bool have_imported_geometry =
+        fh->scales.size() == num_points * 2 && fh->rots.size() == num_points * 4;
+
+    new_points.reserve(new_points.size() + fh->pointsInWorld.size());
+    new_colors.reserve(new_colors.size() + fh->colors.size());
+    new_scales.reserve(new_scales.size() + num_points * 2);
+    new_rots.reserve(new_rots.size() + num_points * 4);
+
+    for (std::size_t i = 0; i < num_points; ++i) {
+        const bool is_active = !have_support_levels || fh->pointSupportLevels[i] >= 2;
+        if (seed_only_active_points && !is_active) {
+            continue;
+        }
+
+        new_points.push_back(fh->pointsInWorld[i * 3 + 0]);
+        new_points.push_back(fh->pointsInWorld[i * 3 + 1]);
+        new_points.push_back(fh->pointsInWorld[i * 3 + 2]);
+
+        new_colors.push_back(fh->colors[i * 3 + 0]);
+        new_colors.push_back(fh->colors[i * 3 + 1]);
+        new_colors.push_back(fh->colors[i * 3 + 2]);
+
+        if (use_imported_seed_geometry && have_imported_geometry) {
+            new_scales.push_back(fh->scales[i * 2 + 0]);
+            new_scales.push_back(fh->scales[i * 2 + 1]);
+            new_rots.push_back(fh->rots[i * 4 + 0]);
+            new_rots.push_back(fh->rots[i * 4 + 1]);
+            new_rots.push_back(fh->rots[i * 4 + 2]);
+            new_rots.push_back(fh->rots[i * 4 + 3]);
+        } else {
+            new_scales.push_back(seed_isotropic_scale);
+            new_scales.push_back(seed_isotropic_scale);
+            new_rots.push_back(1.0f);
+            new_rots.push_back(0.0f);
+            new_rots.push_back(0.0f);
+            new_rots.push_back(0.0f);
+        }
+    }
+}
+
+Sophus::SE3d pullBackPoseAlongViewingDirection(const Sophus::SE3f& Tcw, double pullback_m)
+{
+    Sophus::SE3d Twc = Tcw.cast<double>().inverse();
+    Eigen::Vector3d forward_world = Twc.rotationMatrix() * Eigen::Vector3d(0.0, 0.0, 1.0);
+    if (forward_world.norm() < 1e-9) {
+        forward_world = Eigen::Vector3d(0.0, 0.0, 1.0);
+    } else {
+        forward_world.normalize();
+    }
+
+    Twc.translation() -= pullback_m * forward_world;
+    return Twc.inverse();
+}
+
 std::string trimCopy(std::string value)
 {
     auto not_space = [](unsigned char c) { return !std::isspace(c); };
@@ -605,6 +671,18 @@ void GaussianMapper::readConfigFromFile(std::filesystem::path cfg_path)
     rendered_image_viewer_scale_ = getRequiredValue<float>(settings_file, "GaussianViewer.image_scale");
     rendered_image_viewer_scale_main_ = getRequiredValue<float>(settings_file, "GaussianViewer.image_scale_main");
     loc_camera_cfg_path = getOptionalValue<std::string>(settings_file, "Localization.camera_cfg_path", "");
+    use_imported_seed_geometry_ = getOptionalValue<int>(settings_file, "Mapper.use_imported_seed_geometry", 0) != 0;
+    seed_only_active_points_ = getOptionalValue<int>(settings_file, "Mapper.seed_only_active_points", 1) != 0;
+    seed_isotropic_scale_ = getOptionalValue<float>(settings_file, "Mapper.seed_isotropic_scale", 0.01f);
+    depth_evidence_prune_start_iter_ = getOptionalValue<int>(settings_file, "Mapper.depth_evidence_prune_start_iter", 1000);
+    depth_evidence_prune_interval_ = getOptionalValue<int>(settings_file, "Mapper.depth_evidence_prune_interval", opt_params_.densification_interval_);
+    depth_evidence_min_age_ = getOptionalValue<int>(settings_file, "Mapper.depth_evidence_min_age", 500);
+    depth_evidence_min_support_hits_ = getOptionalValue<int>(settings_file, "Mapper.depth_evidence_min_support_hits", 1);
+    depth_evidence_min_free_space_hits_ = getOptionalValue<int>(settings_file, "Mapper.depth_evidence_min_free_space_hits", 2);
+    depth_evidence_support_margin_ = getOptionalValue<float>(settings_file, "Mapper.depth_evidence_support_margin", 0.05f);
+    depth_evidence_free_space_margin_ = getOptionalValue<float>(settings_file, "Mapper.depth_evidence_free_space_margin", 0.03f);
+    max_gaussian_anisotropy_ratio_ = getOptionalValue<float>(settings_file, "Optimization.max_gaussian_anisotropy_ratio", 4.0f);
+    max_gaussian_scale_fraction_ = getOptionalValue<float>(settings_file, "Optimization.max_gaussian_scale_fraction", 0.03f);
 
     const auto sensor_type_it = settings_file.find("SLAM.sensor_type");
     if (sensor_type_it != settings_file.end()) {
@@ -636,7 +714,7 @@ void GaussianMapper::run()
                     dso::FrozenFrameHessian* fh = keyframesFromDso->front();
 
                     if (fh->pointsInWorld.empty())
-                        break;
+                        continue;
 
                     float fx = pSLAM_->Hcalib.fxl();
                     float fy = pSLAM_->Hcalib.fyl();
@@ -668,17 +746,15 @@ void GaussianMapper::run()
                     //     ++j;
                     // }
 
-                    new_points.reserve(new_points.size() + fh->pointsInWorld.size());
-                    new_points.insert(new_points.end(), fh->pointsInWorld.begin(), fh->pointsInWorld.end());
-
-                    new_colors.reserve(new_colors.size() + fh->colors.size());
-                    new_colors.insert(new_colors.end(), fh->colors.begin(), fh->colors.end());
-
-                    new_scales.reserve(new_scales.size() + fh->scales.size());
-                    new_scales.insert(new_scales.end(), fh->scales.begin(), fh->scales.end());
-
-                    new_rots.reserve(new_rots.size() + fh->rots.size());
-                    new_rots.insert(new_rots.end(), fh->rots.begin(), fh->rots.end());
+                    appendSeedGeometry(
+                        fh,
+                        use_imported_seed_geometry_,
+                        seed_only_active_points_,
+                        seed_isotropic_scale_,
+                        new_points,
+                        new_colors,
+                        new_scales,
+                        new_rots);
 
                     std::shared_ptr<GaussianKeyframe> new_kf = std::make_shared<GaussianKeyframe>(fh->incomingID, getIteration());
                     // std::shared_ptr<GaussianKeyframe> new_kf = std::make_shared<GaussianKeyframe>(scene_->keyframes().size(), getIteration());
@@ -1073,6 +1149,8 @@ void GaussianMapper::trainForOneIteration()
             getIteration() % keyframe_record_interval_ == 0)
             recordKeyframeRendered(masked_image, gt_image, surf_depth, viewpoint_cam->fid_, result_dir_, result_dir_, result_dir_, result_dir_);
 
+        recordDepthEvidenceFromView(viewpoint_cam);
+
         // Densification
         if (getIteration() < opt_params_.densify_until_iter_) {
             // Keep track of max radii in image-space for pruning
@@ -1098,6 +1176,19 @@ void GaussianMapper::trainForOneIteration()
                 && (getIteration() % opacityResetInterval() == 0
                     ||(model_params_.white_background_ && getIteration() == opt_params_.densify_from_iter_)))
                 gaussians_->resetOpacity();
+        }
+
+        if (getIteration() >= depth_evidence_prune_start_iter_ &&
+            depth_evidence_prune_interval_ > 0 &&
+            (getIteration() % depth_evidence_prune_interval_ == 0)) {
+            gaussians_->pruneByDepthEvidence(
+                getIteration(),
+                scene_->cameras_extent_,
+                depth_evidence_min_support_hits_,
+                depth_evidence_min_free_space_hits_,
+                depth_evidence_min_age_,
+                max_gaussian_anisotropy_ratio_,
+                max_gaussian_scale_fraction_);
         }
 
         auto iter_end_timing = std::chrono::steady_clock::now();
@@ -1249,18 +1340,15 @@ void GaussianMapper::combineMappingOperations()
             //     ++j;
             // }
 
-            // get initial GS from DSO
-            new_points.reserve(new_points.size() + fh->pointsInWorld.size());
-            new_points.insert(new_points.end(), fh->pointsInWorld.begin(), fh->pointsInWorld.end());
-
-            new_colors.reserve(new_colors.size() + fh->colors.size());
-            new_colors.insert(new_colors.end(), fh->colors.begin(), fh->colors.end());
-
-            new_scales.reserve(new_scales.size() + fh->scales.size());
-            new_scales.insert(new_scales.end(), fh->scales.begin(), fh->scales.end());
-
-            new_rots.reserve(new_rots.size() + fh->rots.size());
-            new_rots.insert(new_rots.end(), fh->rots.begin(), fh->rots.end());
+            appendSeedGeometry(
+                fh,
+                use_imported_seed_geometry_,
+                seed_only_active_points_,
+                seed_isotropic_scale_,
+                new_points,
+                new_colors,
+                new_scales,
+                new_rots);
 
             // std::cout << "Num_points " << new_points.size()/3 << " Points" << std::endl;
 
@@ -2391,6 +2479,7 @@ void GaussianMapper::renderAndRecordAllKeyframes(
 
     if (name_suffix == "_shutdown") {
         renderThirdPersonViews(name_suffix);
+        renderContextPoseViews(name_suffix);
     }
 }
 
@@ -2423,6 +2512,140 @@ void GaussianMapper::renderThirdPersonViews(std::string name_suffix)
         rendered.convertTo(rendered_u8, CV_8UC3, 255.0);
         writePngImage(rendered_u8, result_dir / (view_name + ".png"));
     }
+}
+
+void GaussianMapper::renderContextPoseViews(std::string name_suffix)
+{
+    if (!record_rendered_image_ || !initial_mapped_ || scene_->keyframes().empty()) {
+        return;
+    }
+
+    std::cout << "[Gaussian Mapper]Rendering context pose views from "
+              << scene_->keyframes().size() << " keyframes" << std::endl;
+
+    std::filesystem::path result_dir = result_dir_ / (std::to_string(getIteration()) + name_suffix) / "context_pose";
+    CHECK_DIRECTORY_AND_CREATE_IF_NOT_EXISTS(result_dir)
+
+    const auto& keyframes = scene_->keyframes();
+    std::vector<std::pair<std::string, std::size_t>> sample_indices = {
+        {"start", 0},
+        {"mid", keyframes.size() / 2},
+        {"end", keyframes.size() - 1},
+    };
+
+    std::vector<std::size_t> unique_indices;
+    unique_indices.reserve(sample_indices.size());
+    for (const auto& [_, index] : sample_indices) {
+        if (std::find(unique_indices.begin(), unique_indices.end(), index) == unique_indices.end()) {
+            unique_indices.push_back(index);
+        }
+    }
+
+    const double pullback_m = 1.5;
+    std::size_t ordinal = 0;
+    for (std::size_t index : unique_indices) {
+        auto kfit = keyframes.begin();
+        std::advance(kfit, static_cast<long>(index));
+        const auto& pkf = kfit->second;
+        Sophus::SE3d pulled_back_Tcw = pullBackPoseAlongViewingDirection(pkf->getPosef(), pullback_m);
+        cv::Mat rendered = renderFromPose(pulled_back_Tcw.cast<float>(), image_width, image_height, true);
+        cv::Mat rendered_u8;
+        rendered.convertTo(rendered_u8, CV_8UC3, 255.0);
+        const std::string file_name = sample_indices[ordinal].first + "_pullback_1p5m.png";
+        writePngImage(rendered_u8, result_dir / file_name);
+        std::cout << "[Gaussian Mapper]Saved context pose render: " << file_name << std::endl;
+        ++ordinal;
+    }
+}
+
+void GaussianMapper::recordDepthEvidenceFromView(std::shared_ptr<GaussianKeyframe> viewpoint_cam)
+{
+    if (device_type_ != torch::kCUDA || !viewpoint_cam || viewpoint_cam->sparse_depth_.numel() == 0) {
+        return;
+    }
+
+    auto points = gaussians_->getXYZ();
+    if (points.numel() == 0) {
+        return;
+    }
+
+    torch::NoGradGuard no_grad;
+    auto visible = markVisible(
+        points,
+        viewpoint_cam->world_view_transform_,
+        viewpoint_cam->full_proj_transform_);
+    if (!visible.any().item<bool>()) {
+        return;
+    }
+
+    auto visible_idx = torch::nonzero(visible).squeeze(1);
+    if (visible_idx.numel() == 0) {
+        return;
+    }
+
+    auto vis_points = points.index({visible_idx});
+    Sophus::SE3f Twc = viewpoint_cam->getPosef().inverse();
+    auto Twc_tensor = tensor_utils::EigenMatrix2TorchTensor(
+        Twc.matrix(),
+        device_type_).transpose(0, 1);
+    auto ones = torch::ones(
+        {vis_points.size(0), 1},
+        torch::TensorOptions().dtype(torch::kFloat32).device(device_type_));
+    auto vis_points_h = torch::cat({vis_points, ones}, /*dim=*/1);
+    auto cam_points_h = vis_points_h.matmul(Twc_tensor);
+    auto cam_points = cam_points_h.index({torch::indexing::Slice(), torch::indexing::Slice(0, 3)});
+    auto z = cam_points.index({torch::indexing::Slice(), 2});
+
+    auto fx = static_cast<float>(viewpoint_cam->intr_.at(0));
+    auto fy = static_cast<float>(viewpoint_cam->intr_.at(1));
+    auto cx = static_cast<float>(viewpoint_cam->intr_.at(2));
+    auto cy = static_cast<float>(viewpoint_cam->intr_.at(3));
+    auto u = torch::round(cam_points.index({torch::indexing::Slice(), 0}) / z * fx + cx).to(torch::kLong);
+    auto v = torch::round(cam_points.index({torch::indexing::Slice(), 1}) / z * fy + cy).to(torch::kLong);
+
+    const int width = viewpoint_cam->image_width_;
+    const int height = viewpoint_cam->image_height_;
+    auto in_front = z > 1e-6f;
+    auto in_bounds = torch::logical_and(u >= 0, u < width);
+    in_bounds = torch::logical_and(in_bounds, torch::logical_and(v >= 0, v < height));
+    auto valid = torch::logical_and(in_front, in_bounds);
+    if (!valid.any().item<bool>()) {
+        return;
+    }
+
+    auto valid_idx = visible_idx.index({valid});
+    auto z_valid = z.index({valid});
+    auto u_valid = u.index({valid});
+    auto v_valid = v.index({valid});
+    auto sparse_depth = viewpoint_cam->sparse_depth_.to(device_type_);
+    auto sparse_flat = sparse_depth.flatten();
+    auto sample_idx = v_valid * width + u_valid;
+    auto sampled_depth = sparse_flat.index({sample_idx});
+    auto has_depth = sampled_depth > 0.0f;
+    if (!has_depth.any().item<bool>()) {
+        return;
+    }
+
+    auto z_sampled = z_valid.index({has_depth});
+    auto depth_sampled = sampled_depth.index({has_depth});
+    auto depth_visible_idx = valid_idx.index({has_depth});
+    auto support_idx = depth_visible_idx.index({
+        torch::abs(z_sampled - depth_sampled) <= depth_evidence_support_margin_});
+    auto free_space_idx = depth_visible_idx.index({
+        z_sampled + depth_evidence_free_space_margin_ < depth_sampled});
+
+    auto support_mask = torch::zeros(
+        {points.size(0)},
+        torch::TensorOptions().dtype(torch::kBool).device(device_type_));
+    auto free_space_mask = torch::zeros_like(support_mask);
+    if (support_idx.numel() > 0) {
+        support_mask.index_put_({support_idx}, true);
+    }
+    if (free_space_idx.numel() > 0) {
+        free_space_mask.index_put_({free_space_idx}, true);
+    }
+
+    gaussians_->recordDepthEvidence(support_mask, free_space_mask);
 }
 
 void GaussianMapper::savePly(std::filesystem::path result_dir)

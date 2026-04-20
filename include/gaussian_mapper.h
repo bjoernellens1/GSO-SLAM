@@ -234,6 +234,10 @@ protected:
         std::string name_suffix = "");
     void renderThirdPersonViews(
         std::string name_suffix = "");
+    void renderContextPoseViews(
+        std::string name_suffix = "");
+    void recordDepthEvidenceFromView(
+        std::shared_ptr<GaussianKeyframe> viewpoint_cam);
 
     void savePly(std::filesystem::path result_dir);
     void keyframesToJson(std::filesystem::path result_dir);
@@ -355,6 +359,19 @@ protected:
 
     int training_report_interval_;
     bool record_loop_ply_;
+
+    bool use_imported_seed_geometry_ = false;
+    bool seed_only_active_points_ = true;
+    float seed_isotropic_scale_ = 0.01f;
+    int depth_evidence_prune_start_iter_ = 1000;
+    int depth_evidence_prune_interval_ = 100;
+    int depth_evidence_min_age_ = 500;
+    int depth_evidence_min_support_hits_ = 1;
+    int depth_evidence_min_free_space_hits_ = 2;
+    float depth_evidence_support_margin_ = 0.05f;
+    float depth_evidence_free_space_margin_ = 0.03f;
+    float max_gaussian_anisotropy_ratio_ = 4.0f;
+    float max_gaussian_scale_fraction_ = 0.03f;
 
     int prune_big_point_after_iter_;
     float densify_min_opacity_ = 20;

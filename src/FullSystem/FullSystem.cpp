@@ -1694,6 +1694,7 @@ void FullSystem::makeKeyFrame( FrameHessian* fh)
 					newFh->pointsInWorld.push_back(point_in_world.x());
 					newFh->pointsInWorld.push_back(point_in_world.y());
 					newFh->pointsInWorld.push_back(point_in_world.z());
+					newFh->pointSupportLevels.push_back(2);
 
 					// scales
 					Eigen::Vector3f scales = ph->eigenvalues.cwiseSqrt();
@@ -1763,6 +1764,7 @@ void FullSystem::makeKeyFrame( FrameHessian* fh)
 					newFh->pointsInWorld.push_back(point_in_world.x());
 					newFh->pointsInWorld.push_back(point_in_world.y());
 					newFh->pointsInWorld.push_back(point_in_world.z());
+					newFh->pointSupportLevels.push_back(1);
 
 					// scales
 					Eigen::Vector3f scales = ph->eigenvalues.cwiseSqrt();

@@ -176,6 +176,12 @@ void GaussianModel::createFromPcd(
     this->exist_since_iter_ = torch::zeros(
         {fused_point_cloud.size(0)},
         torch::TensorOptions().dtype(torch::kInt32).device(device_type_));
+    this->support_hits_ = torch::zeros(
+        {fused_point_cloud.size(0)},
+        torch::TensorOptions().dtype(torch::kInt32).device(device_type_));
+    this->free_space_hits_ = torch::zeros(
+        {fused_point_cloud.size(0)},
+        torch::TensorOptions().dtype(torch::kInt32).device(device_type_));
 
     this->xyz_ = fused_point_cloud.requires_grad_();
     this->features_dc_ = features.index({torch::indexing::Slice(),
@@ -253,6 +259,12 @@ void GaussianModel::createFromPcd(
                    torch::TensorOptions().dtype(torch::kFloat).device(device_type_)));
 
     this->exist_since_iter_ = torch::zeros(
+        {new_point_cloud.size(0)},
+        torch::TensorOptions().dtype(torch::kInt32).device(device_type_));
+    this->support_hits_ = torch::zeros(
+        {new_point_cloud.size(0)},
+        torch::TensorOptions().dtype(torch::kInt32).device(device_type_));
+    this->free_space_hits_ = torch::zeros(
         {new_point_cloud.size(0)},
         torch::TensorOptions().dtype(torch::kInt32).device(device_type_));
 
@@ -344,6 +356,12 @@ void GaussianModel::createFromPcd(
                    torch::TensorOptions().dtype(torch::kFloat).device(device_type_)));
 
     this->exist_since_iter_ = torch::zeros(
+        {new_point_cloud.size(0)},
+        torch::TensorOptions().dtype(torch::kInt32).device(device_type_));
+    this->support_hits_ = torch::zeros(
+        {new_point_cloud.size(0)},
+        torch::TensorOptions().dtype(torch::kInt32).device(device_type_));
+    this->free_space_hits_ = torch::zeros(
         {new_point_cloud.size(0)},
         torch::TensorOptions().dtype(torch::kInt32).device(device_type_));
 
@@ -956,6 +974,8 @@ void GaussianModel::prunePoints(torch::Tensor& mask)
 
     this->denom_ = this->denom_.index({valid_points_mask});
     this->max_radii2D_ = this->max_radii2D_.index({valid_points_mask});
+    this->support_hits_ = this->support_hits_.index({valid_points_mask});
+    this->free_space_hits_ = this->free_space_hits_.index({valid_points_mask});
 }
 
 void GaussianModel::densificationPostfix(
@@ -1041,10 +1061,97 @@ void GaussianModel::densificationPostfix(
     GAUSSIAN_MODEL_TENSORS_TO_VEC
 
     this->exist_since_iter_ = torch::cat({this->exist_since_iter_, new_exist_since_iter}, /*dim=*/0);
+    this->support_hits_ = torch::cat(
+        {this->support_hits_, torch::zeros_like(new_exist_since_iter)},
+        /*dim=*/0);
+    this->free_space_hits_ = torch::cat(
+        {this->free_space_hits_, torch::zeros_like(new_exist_since_iter)},
+        /*dim=*/0);
 
     this->xyz_gradient_accum_ = torch::zeros({this->getXYZ().size(0), 1}, torch::TensorOptions().device(device_type_));
     this->denom_ = torch::zeros({this->getXYZ().size(0), 1}, torch::TensorOptions().device(device_type_));
     this->max_radii2D_ = torch::zeros({this->getXYZ().size(0)}, torch::TensorOptions().device(device_type_));
+}
+
+void GaussianModel::recordDepthEvidence(
+    torch::Tensor& support_mask,
+    torch::Tensor& free_space_mask)
+{
+    torch::NoGradGuard no_grad;
+    if (this->getXYZ().size(0) == 0)
+        return;
+
+    if (support_hits_.numel() != this->getXYZ().size(0)) {
+        support_hits_ = torch::zeros(
+            {this->getXYZ().size(0)},
+            torch::TensorOptions().dtype(torch::kInt32).device(device_type_));
+        free_space_hits_ = torch::zeros(
+            {this->getXYZ().size(0)},
+            torch::TensorOptions().dtype(torch::kInt32).device(device_type_));
+    }
+
+    if (support_mask.numel() > 0 && support_mask.any().item<bool>()) {
+        support_hits_.index_put_(
+            {support_mask},
+            support_hits_.index({support_mask}) + 1);
+    }
+
+    if (free_space_mask.numel() > 0 && free_space_mask.any().item<bool>()) {
+        free_space_hits_.index_put_(
+            {free_space_mask},
+            free_space_hits_.index({free_space_mask}) + 1);
+    }
+}
+
+void GaussianModel::pruneByDepthEvidence(
+    int current_iter,
+    float scene_extent,
+    int min_support_hits,
+    int min_free_space_hits,
+    int min_age,
+    float max_anisotropy_ratio,
+    float max_scale_fraction)
+{
+    torch::NoGradGuard no_grad;
+    if (this->getXYZ().size(0) == 0)
+        return;
+
+    if (support_hits_.numel() != this->getXYZ().size(0)) {
+        support_hits_ = torch::zeros(
+            {this->getXYZ().size(0)},
+            torch::TensorOptions().dtype(torch::kInt32).device(device_type_));
+        free_space_hits_ = torch::zeros(
+            {this->getXYZ().size(0)},
+            torch::TensorOptions().dtype(torch::kInt32).device(device_type_));
+    }
+
+    auto ages = current_iter - this->exist_since_iter_;
+    auto mature_mask = ages >= min_age;
+
+    auto support_lt = support_hits_ < min_support_hits;
+    auto free_space_ge = free_space_hits_ >= min_free_space_hits;
+
+    auto prune_free_space = torch::logical_and(
+        mature_mask,
+        torch::logical_and(free_space_ge, support_lt));
+
+    auto scales = this->getScalingActivation();
+    auto min_scales = std::get<0>(scales.min(/*dim=*/1));
+    auto max_scales = std::get<0>(scales.max(/*dim=*/1));
+    auto anisotropy = max_scales / torch::clamp_min(min_scales, 1e-6f);
+
+    auto prune_scale = torch::logical_or(
+        anisotropy > max_anisotropy_ratio,
+        max_scales > (max_scale_fraction * scene_extent));
+    auto prune_tiny = min_scales < 1e-4f;
+
+    auto prune_mask = torch::logical_or(
+        prune_free_space,
+        torch::logical_or(prune_scale, prune_tiny));
+
+    if (prune_mask.any().item<bool>()) {
+        prunePoints(prune_mask);
+    }
 }
 
 void GaussianModel::densifyAndSplit(
@@ -1062,6 +1169,11 @@ void GaussianModel::densifyAndSplit(
         selected_pts_mask,
         std::get<0>(torch::max(this->getScalingActivation(), /*dim=*/1)) > percentDense() * scene_extent
     );
+    if (support_hits_.numel() == this->getXYZ().size(0)) {
+        selected_pts_mask = torch::logical_and(
+            selected_pts_mask,
+            support_hits_ >= 2);
+    }
 
     auto stds = this->getScalingActivation().index({selected_pts_mask}).repeat({N, 1});
     stds = torch::cat({stds, 0 * torch::ones({stds.size(0),1}, torch::TensorOptions().device(device_type_))}, /*dim*/-1);
@@ -1106,6 +1218,11 @@ void GaussianModel::densifyAndClone(
         selected_pts_mask,
         std::get<0>(torch::max(this->getScalingActivation(), /*dim=*/1)) <= percentDense() * scene_extent
     );
+    if (support_hits_.numel() == this->getXYZ().size(0)) {
+        selected_pts_mask = torch::logical_and(
+            selected_pts_mask,
+            support_hits_ >= 2);
+    }
 
     auto new_xyz = this->xyz_.index({selected_pts_mask});
     auto new_features_dc = this->features_dc_.index({selected_pts_mask});
