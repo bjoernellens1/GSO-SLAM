@@ -28,6 +28,60 @@
 
 namespace {
 
+Sophus::SE3d makeLookAtPoseC2W(
+    const Eigen::Vector3d& eye,
+    const Eigen::Vector3d& target,
+    const Eigen::Vector3d& world_up = Eigen::Vector3d(0.0, 1.0, 0.0))
+{
+    Eigen::Vector3d forward = target - eye;
+    if (forward.norm() < 1e-9) {
+        forward = Eigen::Vector3d(0.0, 0.0, 1.0);
+    } else {
+        forward.normalize();
+    }
+
+    Eigen::Vector3d right = world_up.cross(forward);
+    if (right.norm() < 1e-9) {
+        right = Eigen::Vector3d(1.0, 0.0, 0.0).cross(forward);
+    }
+    if (right.norm() < 1e-9) {
+        right = Eigen::Vector3d(0.0, 0.0, 1.0).cross(forward);
+    }
+    right.normalize();
+
+    Eigen::Vector3d down = forward.cross(right);
+    if (down.norm() < 1e-9) {
+        down = Eigen::Vector3d(0.0, -1.0, 0.0);
+    } else {
+        down.normalize();
+    }
+
+    Eigen::Matrix3d rotation;
+    rotation.col(0) = right;
+    rotation.col(1) = down;
+    rotation.col(2) = forward;
+    return Sophus::SE3d(Eigen::Quaterniond(rotation), eye);
+}
+
+void writePpmImage(const cv::Mat& bgr_image, const std::filesystem::path& path)
+{
+    cv::Mat rgb_image;
+    cv::cvtColor(bgr_image, rgb_image, cv::COLOR_BGR2RGB);
+
+    std::ofstream out(path, std::ios::binary);
+    if (!out.is_open()) {
+        throw std::runtime_error("Failed to open overview image path: " + path.string());
+    }
+
+    out << "P6\n" << rgb_image.cols << " " << rgb_image.rows << "\n255\n";
+    out.write(
+        reinterpret_cast<const char*>(rgb_image.data),
+        static_cast<std::streamsize>(rgb_image.total() * rgb_image.elemSize()));
+    if (!out.good()) {
+        throw std::runtime_error("Failed to write overview image path: " + path.string());
+    }
+}
+
 std::string trimCopy(std::string value)
 {
     auto not_space = [](unsigned char c) { return !std::isspace(c); };
@@ -2236,6 +2290,41 @@ void GaussianMapper::renderAndRecordAllKeyframes(
         out_psnr_gs << (*kfit).first << " " << std::fixed << std::setprecision(10) << psnr_gs << std::endl;
 
         ++kfit;
+    }
+
+    if (name_suffix == "_shutdown") {
+        renderThirdPersonViews(name_suffix);
+    }
+}
+
+void GaussianMapper::renderThirdPersonViews(std::string name_suffix)
+{
+    if (!record_rendered_image_ || !initial_mapped_ || scene_->keyframes().empty()) {
+        return;
+    }
+
+    auto [translate, radius] = scene_->getNerfppNorm();
+    Eigen::Vector3d scene_center = -translate.cast<double>();
+    double scene_radius = std::max(static_cast<double>(radius), 0.1);
+    double camera_distance = std::max(scene_radius * 3.0, 0.5);
+
+    std::filesystem::path result_dir = result_dir_ / (std::to_string(getIteration()) + name_suffix) / "third_person";
+    CHECK_DIRECTORY_AND_CREATE_IF_NOT_EXISTS(result_dir)
+
+    const std::vector<std::pair<std::string, Eigen::Vector3d>> viewpoints = {
+        {"iso", Eigen::Vector3d(1.0, 0.35, 1.0)},
+        {"front", Eigen::Vector3d(0.0, 0.25, 1.0)},
+        {"side", Eigen::Vector3d(1.0, 0.25, 0.0)},
+        {"top", Eigen::Vector3d(0.1, 1.0, 0.1)},
+    };
+
+    for (const auto& [view_name, direction] : viewpoints) {
+        Eigen::Vector3d eye = scene_center + camera_distance * direction.normalized();
+        Sophus::SE3d c2w = makeLookAtPoseC2W(eye, scene_center);
+        cv::Mat rendered = renderFromPose(c2w.cast<float>(), image_width, image_height, true);
+        cv::Mat rendered_u8;
+        rendered.convertTo(rendered_u8, CV_8UC3, 255.0);
+        writePpmImage(rendered_u8, result_dir / (view_name + ".ppm"));
     }
 }
 

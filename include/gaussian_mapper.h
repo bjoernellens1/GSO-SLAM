@@ -232,6 +232,8 @@ protected:
         std::string name_suffix = "");
     void renderAndRecordAllKeyframes(
         std::string name_suffix = "");
+    void renderThirdPersonViews(
+        std::string name_suffix = "");
 
     void savePly(std::filesystem::path result_dir);
     void keyframesToJson(std::filesystem::path result_dir);

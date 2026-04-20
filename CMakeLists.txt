@@ -221,7 +221,6 @@ endif()
 ##################################################################################
 
 add_library(gaussian_mapper SHARED
-    thirdparty/opencv_cuda_shim/opencv_abi_shim.cpp
     thirdparty/tinyply/tinyply.h
     thirdparty/tinyply/tinyply.cpp
     include/gaussian_keyframe.h
@@ -250,9 +249,6 @@ add_library(gaussian_mapper SHARED
     src/GS/gaussian_scene.cpp
     src/GS/gaussian_trainer.cpp
     src/GS/gaussian_mapper.cpp)
-set_source_files_properties(
-    thirdparty/opencv_cuda_shim/opencv_abi_shim.cpp
-    PROPERTIES COMPILE_FLAGS "-U_GLIBCXX_USE_CXX11_ABI -D_GLIBCXX_USE_CXX11_ABI=1")
 target_include_directories(gaussian_mapper PRIVATE
     /opt/conda/include)
 target_compile_options(gaussian_mapper PRIVATE
