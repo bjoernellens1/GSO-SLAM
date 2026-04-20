@@ -178,7 +178,7 @@ The main runtime controls for staying near real time are:
 - stop densification after the configured iteration limit
 - use sparse DSO geometry as the initial seed instead of starting from a dense reconstruction
 - use GPU image resizing and rendering paths when CUDA is available
-- save a small set of shutdown "third-person" overview renders from synthetic cameras around the scene center so benchmark artifacts show the whole reconstruction, not just tracked keyframe views
+- save a small set of shutdown "third-person" PNG overview renders from synthetic cameras around the scene center so benchmark artifacts show the whole reconstruction, not just tracked keyframe views
 
 There is also a second level of performance control in the DSO front-end:
 

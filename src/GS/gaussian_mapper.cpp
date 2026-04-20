@@ -19,8 +19,12 @@
 #include "include/gaussian_mapper.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cctype>
 #include <unordered_map>
+#include <vector>
+
+#include <png.h>
 
 #ifndef GSO_ENABLE_GUI
 #define GSO_ENABLE_GUI 0
@@ -63,23 +67,56 @@ Sophus::SE3d makeLookAtPoseC2W(
     return Sophus::SE3d(Eigen::Quaterniond(rotation), eye);
 }
 
-void writePpmImage(const cv::Mat& bgr_image, const std::filesystem::path& path)
+void writePngImage(const cv::Mat& bgr_image, const std::filesystem::path& path)
 {
     cv::Mat rgb_image;
     cv::cvtColor(bgr_image, rgb_image, cv::COLOR_BGR2RGB);
 
-    std::ofstream out(path, std::ios::binary);
-    if (!out.is_open()) {
+    FILE* fp = std::fopen(path.c_str(), "wb");
+    if (fp == nullptr) {
         throw std::runtime_error("Failed to open overview image path: " + path.string());
     }
 
-    out << "P6\n" << rgb_image.cols << " " << rgb_image.rows << "\n255\n";
-    out.write(
-        reinterpret_cast<const char*>(rgb_image.data),
-        static_cast<std::streamsize>(rgb_image.total() * rgb_image.elemSize()));
-    if (!out.good()) {
+    png_structp png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
+    if (png_ptr == nullptr) {
+        std::fclose(fp);
+        throw std::runtime_error("Failed to create PNG writer for: " + path.string());
+    }
+
+    png_infop info_ptr = png_create_info_struct(png_ptr);
+    if (info_ptr == nullptr) {
+        png_destroy_write_struct(&png_ptr, nullptr);
+        std::fclose(fp);
+        throw std::runtime_error("Failed to create PNG info for: " + path.string());
+    }
+
+    if (setjmp(png_jmpbuf(png_ptr))) {
+        png_destroy_write_struct(&png_ptr, &info_ptr);
+        std::fclose(fp);
         throw std::runtime_error("Failed to write overview image path: " + path.string());
     }
+
+    png_init_io(png_ptr, fp);
+    png_set_IHDR(
+        png_ptr,
+        info_ptr,
+        static_cast<png_uint_32>(rgb_image.cols),
+        static_cast<png_uint_32>(rgb_image.rows),
+        8,
+        PNG_COLOR_TYPE_RGB,
+        PNG_INTERLACE_NONE,
+        PNG_COMPRESSION_TYPE_BASE,
+        PNG_FILTER_TYPE_BASE);
+    png_write_info(png_ptr, info_ptr);
+
+    std::vector<png_bytep> rows(static_cast<std::size_t>(rgb_image.rows));
+    for (int y = 0; y < rgb_image.rows; ++y) {
+        rows[static_cast<std::size_t>(y)] = rgb_image.data + static_cast<std::size_t>(y) * rgb_image.step;
+    }
+    png_write_image(png_ptr, rows.data());
+    png_write_end(png_ptr, nullptr);
+    png_destroy_write_struct(&png_ptr, &info_ptr);
+    std::fclose(fp);
 }
 
 std::string trimCopy(std::string value)
@@ -2324,7 +2361,7 @@ void GaussianMapper::renderThirdPersonViews(std::string name_suffix)
         cv::Mat rendered = renderFromPose(c2w.cast<float>(), image_width, image_height, true);
         cv::Mat rendered_u8;
         rendered.convertTo(rendered_u8, CV_8UC3, 255.0);
-        writePpmImage(rendered_u8, result_dir / (view_name + ".ppm"));
+        writePngImage(rendered_u8, result_dir / (view_name + ".png"));
     }
 }
 
