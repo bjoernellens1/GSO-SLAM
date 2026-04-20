@@ -363,6 +363,7 @@ protected:
     bool use_imported_seed_geometry_ = false;
     bool seed_only_active_points_ = true;
     float seed_isotropic_scale_ = 0.01f;
+    bool enable_depth_evidence_pruning_ = false;
     int depth_evidence_prune_start_iter_ = 1000;
     int depth_evidence_prune_interval_ = 100;
     int depth_evidence_min_age_ = 500;

@@ -260,6 +260,27 @@ Sophus::SE3d pullBackPoseAlongViewingDirection(const Sophus::SE3f& Tcw, double p
     return Twc.inverse();
 }
 
+Eigen::Vector3d estimateSceneCenter(
+    const std::shared_ptr<GaussianModel>& gaussians,
+    GaussianScene& scene)
+{
+    if (gaussians) {
+        auto points = gaussians->getXYZ();
+        if (points.numel() > 0) {
+            auto points_cpu = points.detach().to(torch::kCPU);
+            Eigen::Vector3d center;
+            center.x() = points_cpu.index({torch::indexing::Slice(), 0}).mean().item<double>();
+            center.y() = points_cpu.index({torch::indexing::Slice(), 1}).mean().item<double>();
+            center.z() = points_cpu.index({torch::indexing::Slice(), 2}).mean().item<double>();
+            return center;
+        }
+    }
+
+    auto [translate, radius] = scene.getNerfppNorm();
+    (void)radius;
+    return -translate.cast<double>();
+}
+
 std::string trimCopy(std::string value)
 {
     auto not_space = [](unsigned char c) { return !std::isspace(c); };
@@ -674,6 +695,7 @@ void GaussianMapper::readConfigFromFile(std::filesystem::path cfg_path)
     use_imported_seed_geometry_ = getOptionalValue<int>(settings_file, "Mapper.use_imported_seed_geometry", 0) != 0;
     seed_only_active_points_ = getOptionalValue<int>(settings_file, "Mapper.seed_only_active_points", 1) != 0;
     seed_isotropic_scale_ = getOptionalValue<float>(settings_file, "Mapper.seed_isotropic_scale", 0.01f);
+    enable_depth_evidence_pruning_ = getOptionalValue<int>(settings_file, "Mapper.enable_depth_evidence_pruning", 0) != 0;
     depth_evidence_prune_start_iter_ = getOptionalValue<int>(settings_file, "Mapper.depth_evidence_prune_start_iter", 1000);
     depth_evidence_prune_interval_ = getOptionalValue<int>(settings_file, "Mapper.depth_evidence_prune_interval", opt_params_.densification_interval_);
     depth_evidence_min_age_ = getOptionalValue<int>(settings_file, "Mapper.depth_evidence_min_age", 500);
@@ -1178,7 +1200,8 @@ void GaussianMapper::trainForOneIteration()
                 gaussians_->resetOpacity();
         }
 
-        if (getIteration() >= depth_evidence_prune_start_iter_ &&
+        if (enable_depth_evidence_pruning_ &&
+            getIteration() >= depth_evidence_prune_start_iter_ &&
             depth_evidence_prune_interval_ > 0 &&
             (getIteration() % depth_evidence_prune_interval_ == 0)) {
             gaussians_->pruneByDepthEvidence(
@@ -2489,10 +2512,10 @@ void GaussianMapper::renderThirdPersonViews(std::string name_suffix)
         return;
     }
 
+    Eigen::Vector3d scene_center = estimateSceneCenter(gaussians_, *scene_);
     auto [translate, radius] = scene_->getNerfppNorm();
-    Eigen::Vector3d scene_center = -translate.cast<double>();
     double scene_radius = std::max(static_cast<double>(radius), 0.1);
-    double camera_distance = std::max(scene_radius * 3.0, 0.5);
+    double camera_distance = std::max(scene_radius * 1.6, 0.35);
 
     std::filesystem::path result_dir = result_dir_ / (std::to_string(getIteration()) + name_suffix) / "third_person";
     CHECK_DIRECTORY_AND_CREATE_IF_NOT_EXISTS(result_dir)
@@ -2507,7 +2530,7 @@ void GaussianMapper::renderThirdPersonViews(std::string name_suffix)
     for (const auto& [view_name, direction] : viewpoints) {
         Eigen::Vector3d eye = scene_center + camera_distance * direction.normalized();
         Sophus::SE3d c2w = makeLookAtPoseC2W(eye, scene_center);
-        cv::Mat rendered = renderFromPose(c2w.cast<float>(), image_width, image_height, true);
+        cv::Mat rendered = renderFromPose(c2w.inverse().cast<float>(), image_width, image_height, true);
         cv::Mat rendered_u8;
         rendered.convertTo(rendered_u8, CV_8UC3, 255.0);
         writePngImage(rendered_u8, result_dir / (view_name + ".png"));
@@ -2543,12 +2566,15 @@ void GaussianMapper::renderContextPoseViews(std::string name_suffix)
 
     const double pullback_m = 1.5;
     std::size_t ordinal = 0;
+    Eigen::Vector3d scene_center = estimateSceneCenter(gaussians_, *scene_);
     for (std::size_t index : unique_indices) {
         auto kfit = keyframes.begin();
         std::advance(kfit, static_cast<long>(index));
         const auto& pkf = kfit->second;
         Sophus::SE3d pulled_back_Tcw = pullBackPoseAlongViewingDirection(pkf->getPosef(), pullback_m);
-        cv::Mat rendered = renderFromPose(pulled_back_Tcw.cast<float>(), image_width, image_height, true);
+        Eigen::Vector3d eye = pulled_back_Tcw.inverse().translation();
+        Sophus::SE3d overview_c2w = makeLookAtPoseC2W(eye, scene_center);
+        cv::Mat rendered = renderFromPose(overview_c2w.inverse().cast<float>(), image_width, image_height, true);
         cv::Mat rendered_u8;
         rendered.convertTo(rendered_u8, CV_8UC3, 255.0);
         const std::string file_name = sample_indices[ordinal].first + "_pullback_1p5m.png";
