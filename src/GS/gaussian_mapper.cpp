@@ -119,6 +119,81 @@ void writePngImage(const cv::Mat& bgr_image, const std::filesystem::path& path)
     std::fclose(fp);
 }
 
+void writePngImage(const cv::Mat& image, const std::filesystem::path& path, bool assume_bgr)
+{
+    if (image.empty()) {
+        throw std::runtime_error("Cannot write empty overview image: " + path.string());
+    }
+
+    cv::Mat converted;
+    const cv::Mat* png_image = &image;
+    int color_type = PNG_COLOR_TYPE_GRAY;
+    int bit_depth = 8;
+
+    if (image.type() == CV_8UC3 && assume_bgr) {
+        cv::cvtColor(image, converted, cv::COLOR_BGR2RGB);
+        png_image = &converted;
+        color_type = PNG_COLOR_TYPE_RGB;
+    } else if (image.type() == CV_8UC1) {
+        color_type = PNG_COLOR_TYPE_GRAY;
+    } else if (image.type() == CV_16UC1) {
+        color_type = PNG_COLOR_TYPE_GRAY;
+        bit_depth = 16;
+    } else if (image.type() == CV_8UC4 && assume_bgr) {
+        cv::cvtColor(image, converted, cv::COLOR_BGRA2RGBA);
+        png_image = &converted;
+        color_type = PNG_COLOR_TYPE_RGBA;
+    } else {
+        throw std::runtime_error("Unsupported PNG image type for: " + path.string());
+    }
+
+    FILE* fp = std::fopen(path.c_str(), "wb");
+    if (fp == nullptr) {
+        throw std::runtime_error("Failed to open overview image path: " + path.string());
+    }
+
+    png_structp png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
+    if (png_ptr == nullptr) {
+        std::fclose(fp);
+        throw std::runtime_error("Failed to create PNG writer for: " + path.string());
+    }
+
+    png_infop info_ptr = png_create_info_struct(png_ptr);
+    if (info_ptr == nullptr) {
+        png_destroy_write_struct(&png_ptr, nullptr);
+        std::fclose(fp);
+        throw std::runtime_error("Failed to create PNG info for: " + path.string());
+    }
+
+    if (setjmp(png_jmpbuf(png_ptr))) {
+        png_destroy_write_struct(&png_ptr, &info_ptr);
+        std::fclose(fp);
+        throw std::runtime_error("Failed to write overview image path: " + path.string());
+    }
+
+    png_init_io(png_ptr, fp);
+    png_set_IHDR(
+        png_ptr,
+        info_ptr,
+        static_cast<png_uint_32>(png_image->cols),
+        static_cast<png_uint_32>(png_image->rows),
+        bit_depth,
+        color_type,
+        PNG_INTERLACE_NONE,
+        PNG_COMPRESSION_TYPE_BASE,
+        PNG_FILTER_TYPE_BASE);
+    png_write_info(png_ptr, info_ptr);
+
+    std::vector<png_bytep> rows(static_cast<std::size_t>(png_image->rows));
+    for (int y = 0; y < png_image->rows; ++y) {
+        rows[static_cast<std::size_t>(y)] = const_cast<png_bytep>(png_image->ptr(y));
+    }
+    png_write_image(png_ptr, rows.data());
+    png_write_end(png_ptr, nullptr);
+    png_destroy_write_struct(&png_ptr, &info_ptr);
+    std::fclose(fp);
+}
+
 std::string trimCopy(std::string value)
 {
     auto not_space = [](unsigned char c) { return !std::isspace(c); };
@@ -1860,27 +1935,23 @@ void GaussianMapper::recordKeyframeRendered(
         std::filesystem::path result_depth_dir,
         std::string name_suffix)
 {
-#if GSO_ENABLE_GUI
     if (record_rendered_image_) {
         auto image_cv = tensor_utils::torchTensor2CvMat_Float32(rendered);
-        // cv::cvtColor(image_cv, image_cv, CV_RGB2BGR);
         image_cv.convertTo(image_cv, CV_8UC3, 255.0f);
-        cv::imwrite(result_img_dir / (std::to_string(getIteration()) + "_" + std::to_string(kfid) + name_suffix + ".jpg"), image_cv);
+        writePngImage(image_cv, result_img_dir / (std::to_string(getIteration()) + "_" + std::to_string(kfid) + name_suffix + ".png"), true);
     }
 
     if (record_ground_truth_image_) {
         auto gt_image_cv = tensor_utils::torchTensor2CvMat_Float32(ground_truth);
-        // cv::cvtColor(gt_image_cv, gt_image_cv, CV_RGB2BGR);
         gt_image_cv.convertTo(gt_image_cv, CV_8UC3, 255.0f);
-        cv::imwrite(result_gt_dir / (std::to_string(getIteration()) + "_" + std::to_string(kfid) + name_suffix + "_gt.jpg"), gt_image_cv);
+        writePngImage(gt_image_cv, result_gt_dir / (std::to_string(getIteration()) + "_" + std::to_string(kfid) + name_suffix + "_gt.png"), true);
     }
 
     if (record_loss_image_) {
         torch::Tensor loss_tensor = torch::abs(rendered - ground_truth);
         auto loss_image_cv = tensor_utils::torchTensor2CvMat_Float32(loss_tensor);
-        // cv::cvtColor(loss_image_cv, loss_image_cv, CV_RGB2BGR);
         loss_image_cv.convertTo(loss_image_cv, CV_8UC3, 255.0f);
-        cv::imwrite(result_loss_dir / (std::to_string(getIteration()) + "_" + std::to_string(kfid) + name_suffix + "_loss.jpg"), loss_image_cv);
+        writePngImage(loss_image_cv, result_loss_dir / (std::to_string(getIteration()) + "_" + std::to_string(kfid) + name_suffix + "_loss.png"), true);
     }
 
     if (record_depth_image_) {
@@ -1899,22 +1970,11 @@ void GaussianMapper::recordKeyframeRendered(
         // cv::normalize(depth_clipped, depth_cv_normalized, 0, 255, cv::NORM_MINMAX);
         // depth_cv_normalized.convertTo(depth_cv_normalized, CV_8UC1);
         // cv::imwrite(result_depth_dir / (std::to_string(getIteration()) + "_" + std::to_string(kfid) + name_suffix + ".png"), depth_cv_normalized);
-    
+
         depth_clipped *= 6553.5;
         depth_clipped.convertTo(depth_clipped, CV_16U);
-        cv::imwrite(result_depth_dir / (std::to_string(getIteration()) + "_" + std::to_string(kfid) + name_suffix + ".png"), depth_clipped);
+        writePngImage(depth_clipped, result_depth_dir / (std::to_string(getIteration()) + "_" + std::to_string(kfid) + name_suffix + ".png"), false);
     }
-#else
-    (void)rendered;
-    (void)ground_truth;
-    (void)depth_map;
-    (void)kfid;
-    (void)result_img_dir;
-    (void)result_gt_dir;
-    (void)result_loss_dir;
-    (void)result_depth_dir;
-    (void)name_suffix;
-#endif
 }
 
 cv::Mat GaussianMapper::renderFromPose(
