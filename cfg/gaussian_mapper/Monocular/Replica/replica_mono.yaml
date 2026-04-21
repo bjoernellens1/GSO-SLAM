@@ -44,6 +44,7 @@ RGBD.min_depth: 0.0000000001
 RGBD.max_depth: 40.0
 
 Mapper.inactive_geo_densify: 1  # 0:false, 1 or other integer:true
+Mapper.depth_cache: 10
 Mapper.min_num_initial_map_kfs: 3 # must be smaller than 8
 Mapper.new_keyframe_times_of_use: 3 # 8
 Mapper.local_BA_increased_times_of_use: 0

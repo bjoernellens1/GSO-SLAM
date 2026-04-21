@@ -137,6 +137,11 @@ float setting_frameEnergyTHFacMedian = 1.5;
 float setting_overallEnergyTHWeight = 1;
 float setting_coarseCutoffTH = 20;
 
+// RGB-D tracking parameters
+float setting_rgbdTrackingWeight = 0.0f;   // weight for depth residuals relative to photometric (0 = disabled)
+float setting_rgbdDepthScale = 1000.0f;     // depth scale factor (e.g., 1000 for mm->m, 5000 for TUM)
+int setting_rgbdTrackingMode = 0;           // 0 = mono, 1 = rgbd
+
 
 
 

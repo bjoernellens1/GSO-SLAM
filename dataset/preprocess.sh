@@ -29,7 +29,7 @@ echo ""
 echo "[2/2] Processing TUM Datasets..."
 TUM_NAMES=("freiburg1_desk" "freiburg2_xyz" "freiburg3_long_office_household")
 
-for name in "${TUM_NAMES[@]}"
+for name in "${TUM_NAMES[@]}" "freiburg2_pioneer_360" "freiburg2_pioneer_slam"
 do
     DIR_NAME="rgbd_dataset_${name}"
     SRC_DIR="${DATA_SRC}/TUM/${DIR_NAME}"

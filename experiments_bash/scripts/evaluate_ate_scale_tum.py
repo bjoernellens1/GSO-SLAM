@@ -48,7 +48,10 @@ import numpy
 import argparse
 import os
 # import rerun as rr
-from natsort import natsorted
+try:
+    from natsort import natsorted
+except ImportError:
+    natsorted = sorted
 
 def align(model,data):
     """Align two trajectories using the method of Horn (closed-form).
@@ -85,7 +88,7 @@ def align(model,data):
         normi = numpy.linalg.norm(model_zerocentered[:,column])
         norms += normi*normi
 
-    s = float(dots/norms)    
+    s = float(numpy.asarray(dots / norms).squeeze())
 
     # print("scale: %f " % s  )
     

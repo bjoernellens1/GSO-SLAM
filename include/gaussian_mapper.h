@@ -33,9 +33,10 @@
 #include <mutex>
 
 #include <opencv2/opencv.hpp>
-#include <jsoncpp/json/json.h>
+#include <opencv2/cudaimgproc.hpp>
+#include <opencv2/cudastereo.hpp>
+#include <opencv2/cudawarping.hpp>
 
-#include "opencv_cuda_compat.h"
 #include "src/FullSystem/FullSystem.h"
 #include "src/FullSystem/HessianBlocks.h"
 #include "src/FullSystem/ImmaturePoint.h"
@@ -96,33 +97,9 @@ struct VariableParameters
     bool do_inactive_geo_densify;
 };
 
-/**
- * @brief Bidirectional coupling orchestrator between DSO and 3D Gaussian Splatting.
- *
- * @c GaussianMapper is the central class of GSO-SLAM's mapping thread.  It:
- *  - Receives keyframes (poses, images, sparse depth) from @c dso::FullSystem.
- *  - Manages the @c GaussianModel training loop (densification, pruning, Adam updates).
- *  - Provides render APIs (@c renderFromPose, @c renderDepthFromPose) used both by the
- *    ImGui viewer and by DSO's depth feedback channel.
- *  - Handles loop-closure corrections by rigidly warping affected Gaussian primitives.
- *  - Saves / loads PLY snapshots.
- *
- * Thread safety: all public methods acquire @c mutex_status_ or @c mutex_settings_ as
- * appropriate.  The model tensors are protected by @c mutex_render_ during rendering.
- */
 class GaussianMapper
 {
 public:
-    /**
-     * @brief Construct a GaussianMapper and initialise the Gaussian scene.
-     *
-     * @param pSLAM                    Shared pointer to the DSO FullSystem instance.
-     *                                 Pass @c nullptr to use offline (COLMAP) mode.
-     * @param gaussian_config_file_path  Path to the YAML configuration file.
-     * @param result_dir               Directory where outputs (PLY, images) are saved.
-     * @param seed                     Random seed for reproducibility.
-     * @param device_type              Torch device (@c torch::kCUDA or @c torch::kCPU).
-     */
     GaussianMapper(
         std::shared_ptr<dso::FullSystem> pSLAM,
         std::filesystem::path gaussian_config_file_path,
@@ -130,112 +107,52 @@ public:
         int seed = 0,
         torch::DeviceType device_type = torch::kCUDA);
 
-    /// @brief Parse all parameters from the YAML config file.
     void readConfigFromFile(std::filesystem::path cfg_path);
 
-    /// @brief Start the continuous training loop (blocking — run on a dedicated thread).
     void run();
-    /// @brief Offline training from a COLMAP reconstruction (blocking).
     void trainColmap();
-    /// @brief Execute exactly one training iteration.
     void trainForOneIteration();
 
-    /// @brief Returns @c true if the mapper has been signalled to stop.
     bool isStopped();
-    /**
-     * @brief Signal the mapper to stop at the end of the current iteration.
-     * @param going_to_stop  Set @c true to stop, @c false to cancel a previous stop signal.
-     */
     void signalStop(const bool going_to_stop = true);
 
-    /**
-     * @brief Render an RGB image from an arbitrary camera pose.
-     *
-     * Thread-safe (acquires @c mutex_render_).
-     *
-     * @param Tcw         Camera-to-world SE3 pose (single precision).
-     * @param width       Output image width in pixels.
-     * @param height      Output image height in pixels.
-     * @param main_vision If @c true, use the main-resolution undistortion map.
-     * @return BGR @c cv::Mat of shape @c [height, width, 3] (uint8).
-     */
     cv::Mat renderFromPose(
         const Sophus::SE3f &Tcw,
         const int width,
         const int height,
         const bool main_vision = false);
 
-    /**
-     * @brief Render a depth map and alpha mask from an arbitrary camera pose.
-     *
-     * Thread-safe (acquires @c mutex_render_).
-     *
-     * @param Tcw         Camera-to-world SE3 pose (double precision).
-     * @param width       Output image width in pixels.
-     * @param height      Output image height in pixels.
-     * @param main_vision If @c true, use the main-resolution undistortion map.
-     * @return Pair of @c torch::Tensor: (depth [H,W], alpha [H,W]).
-     */
     std::tuple<torch::Tensor, torch::Tensor> renderDepthFromPose(
         const Sophus::SE3d &Tcw,
         const int width,
         const int height,
         const bool main_vision = false);
 
-    /**
-     * @brief Render a depth map as a @c cv::Mat from a 4×4 pose matrix.
-     * @param Tcw  4×4 camera-to-world matrix (float).
-     * @return Single-channel float depth image.
-     */
     cv::Mat rendercvMatDepthFromPose(
         const Eigen::Matrix4f &Tcw);
 
-    /// @brief Pull new keyframes from DSO into the Gaussian scene.
     void updateGSKeyFramesFromDSO();
-    /// @brief Push updated keyframe poses back from the Gaussian scene to DSO.
     void updateKeyFramesFromGS();
 
-    /// @brief Returns the current training iteration counter.
     int getIteration();
-    /// @brief Increment the training iteration counter.
     void increaseIteration(const int inc = 1);
 
-    /**
-     * @brief Load a pre-trained model from PLY and optionally camera parameters.
-     * @param ply_path     Path to the @c .ply file.
-     * @param camera_path  Optional path to a JSON camera calibration file.
-     */
-    void loadPly(std::filesystem::path ply_path, std::filesystem::path camera_path = "");
+    float positionLearningRateInit();
+    float featureLearningRate();
+    float opacityLearningRate();
+    float scalingLearningRate();
+    float rotationLearningRate();
+    float percentDense();
+    float lambdaDssim();
+    int opacityResetInterval();
+    float densifyGradThreshold();
+    int densifyInterval();
+    int newKeyframeTimesOfUse();
+    int stableNumIterExistence();
+    bool isKeepingTraining();
+    bool isdoingGausPyramidTraining();
+    bool isdoingInactiveGeoDensify();
 
-    /**
-     * @brief Render depth maps for all provided keyframe poses.
-     * @param kf_poses  Vector of SE3d camera-to-world poses.
-     * @return Vector of (depth, alpha) tensor pairs.
-     */
-    std::vector<std::tuple<torch::Tensor, torch::Tensor>> renderKFDepths(std::vector<Sophus::SE3d> kf_poses);
-
-    // -------------------------------------------------------------------------
-    // Variable parameter getters (thread-safe via mutex_settings_)
-    // -------------------------------------------------------------------------
-    float positionLearningRateInit();  ///< Current position LR init value.
-    float featureLearningRate();       ///< Current SH feature learning rate.
-    float opacityLearningRate();       ///< Current opacity learning rate.
-    float scalingLearningRate();       ///< Current scaling learning rate.
-    float rotationLearningRate();      ///< Current rotation learning rate.
-    float percentDense();              ///< Current percent-dense threshold.
-    float lambdaDssim();               ///< Current SSIM loss weight.
-    int   opacityResetInterval();      ///< Current opacity reset interval (0 = never).
-    float densifyGradThreshold();      ///< Current densification gradient threshold.
-    int   densifyInterval();           ///< Current densification interval.
-    int   newKeyframeTimesOfUse();     ///< Times a new keyframe is sampled before deactivation.
-    int   stableNumIterExistence();    ///< Min iterations a Gaussian must exist for loop-closure warping.
-    bool  isKeepingTraining();         ///< Whether training continues after SLAM ends.
-    bool  isdoingGausPyramidTraining(); ///< Whether multi-resolution pyramid training is active.
-    bool  isdoingInactiveGeoDensify(); ///< Whether inactive geometry densification is active.
-
-    // -------------------------------------------------------------------------
-    // Variable parameter setters (thread-safe via mutex_settings_)
-    // -------------------------------------------------------------------------
     void setPositionLearningRateInit(const float lr);
     void setFeatureLearningRate(const float lr);
     void setOpacityLearningRate(const float lr);
@@ -259,7 +176,10 @@ public:
     void setColmapDataPath(std::filesystem::path colmap_path) { this->model_params_.source_path_ = colmap_path; }
     void setSensorType(SystemSensorType sensor_type) { this->sensor_type_ = sensor_type; }
 
+    void loadPly(std::filesystem::path ply_path, std::filesystem::path camera_path = "");
     std::vector<dso::MinimalImageB3*> gt_imgs_;
+
+    std::vector<std::tuple<torch::Tensor, torch::Tensor>> renderKFDepths(std::vector<Sophus::SE3d> kf_poses);
 
 protected:
     bool hasMetInitialMappingConditions();
@@ -312,6 +232,17 @@ protected:
         std::string name_suffix = "");
     void renderAndRecordAllKeyframes(
         std::string name_suffix = "");
+    void renderThirdPersonViews(
+        std::string name_suffix = "");
+    void renderContextPoseViews(
+        std::string name_suffix = "");
+    void recordDepthEvidenceFromView(
+        std::shared_ptr<GaussianKeyframe> viewpoint_cam);
+    float stabilizeRgbdAlignmentScale(
+        float raw_scale,
+        int num_supporting_samples,
+        std::size_t frame_id);
+    void pruneGeometryOutliers();
 
     void savePly(std::filesystem::path result_dir);
     void keyframesToJson(std::filesystem::path result_dir);
@@ -391,18 +322,14 @@ protected:
     int default_sh_ = 0;
 
     // Settings
-    SystemSensorType sensor_type_;
+    SystemSensorType sensor_type_ = MONOCULAR;
 
     float monocular_inactive_geo_densify_max_pixel_dist_ = 20.0;
     float stereo_baseline_length_ = 0.0f;
     int stereo_min_disparity_ = 0;
     int stereo_num_disparity_ = 128;
     cv::Mat stereo_Q_;
-#if !GSO_HAS_OPENCV_CUDA
-    cv::Ptr<cv::StereoSGBM> stereo_cv_sgbm_;
-#else
     cv::Ptr<cv::cuda::StereoSGM> stereo_cv_sgm_;
-#endif
     float RGBD_min_depth_ = 0.0f;
     float RGBD_max_depth_ = 100.0f;
 
@@ -437,6 +364,29 @@ protected:
 
     int training_report_interval_;
     bool record_loop_ply_;
+
+    bool use_imported_seed_geometry_ = false;
+    bool seed_only_active_points_ = true;
+    float seed_isotropic_scale_ = 0.01f;
+    bool enable_geometry_pruning_ = false;
+    int geometry_prune_start_iter_ = 0;
+    int geometry_prune_interval_ = 100;
+    float geometry_prune_max_scale_fraction_ = 0.02f;
+    float geometry_prune_max_anisotropy_ratio_ = 4.0f;
+    float geometry_prune_max_center_dist_factor_ = 3.0f;
+    bool enable_depth_evidence_pruning_ = false;
+    int depth_evidence_prune_start_iter_ = 1000;
+    int depth_evidence_prune_interval_ = 100;
+    int depth_evidence_min_age_ = 500;
+    int depth_evidence_min_support_hits_ = 1;
+    int depth_evidence_min_free_space_hits_ = 2;
+    float depth_evidence_support_margin_ = 0.05f;
+    float depth_evidence_free_space_margin_ = 0.03f;
+    float max_gaussian_anisotropy_ratio_ = 4.0f;
+    float max_gaussian_scale_fraction_ = 0.03f;
+    bool rgbd_alignment_scale_initialized_ = false;
+    float rgbd_alignment_scale_ = 1.0f;
+    std::vector<float> rgbd_alignment_scale_history_;
 
     int prune_big_point_after_iter_;
     float densify_min_opacity_ = 20;

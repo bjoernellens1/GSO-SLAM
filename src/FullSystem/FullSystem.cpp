@@ -38,6 +38,10 @@
 #include "IOWrapper/ImageDisplay.h"
 #include "util/globalCalib.h"
 #include <Eigen/SVD>
+
+#ifndef GSO_ENABLE_GUI
+#define GSO_ENABLE_GUI 0
+#endif
 #include <Eigen/Eigenvalues>
 #include "FullSystem/PixelSelector.h"
 #include "FullSystem/PixelSelector2.h"
@@ -173,6 +177,9 @@ FullSystem::FullSystem()
 	maxIdJetVisDebug = -1;
 	minIdJetVisTracker = -1;
 	maxIdJetVisTracker = -1;
+
+	rgbdSmoothedScaleRatio = 1.0f;
+	rgbdScaleCorrectionCount = 0;
 }
 
 FullSystem::~FullSystem()
@@ -458,6 +465,29 @@ Vec4 FullSystem::trackNewCoarse(FrameHessian* fh)
 
 
 	return Vec4(achievedRes[0], flowVecs[0], flowVecs[1], flowVecs[2]);
+}
+
+
+void FullSystem::applyRGBDScaleCorrection(FrameHessian* fh)
+{
+	if(setting_rgbdTrackingMode <= 0) return;
+
+	float medianRatio = coarseTracker->computeRGBDScaleRatio();
+	if(medianRatio < 0.3f || medianRatio > 3.0f) return;
+
+	const float smoothingAlpha = 0.05f;
+	rgbdSmoothedScaleRatio = (1.0f - smoothingAlpha) * rgbdSmoothedScaleRatio + smoothingAlpha * medianRatio;
+	rgbdScaleCorrectionCount++;
+
+	if(rgbdScaleCorrectionCount <= 5 || rgbdScaleCorrectionCount % 50 == 0)
+		printf("[RGB-D Scale] frame %d: raw=%.3f smoothed=%.3f cnt=%d\n",
+			   fh->shell->id, medianRatio, rgbdSmoothedScaleRatio, rgbdScaleCorrectionCount);
+
+	if(rgbdSmoothedScaleRatio < 0.3f || rgbdSmoothedScaleRatio > 3.0f) return;
+
+	SE3& pose = fh->shell->camToWorld;
+	Vec3 correctedTranslation = pose.translation() / rgbdSmoothedScaleRatio;
+	pose = SE3(pose.so3(), correctedTranslation);
 }
 
 
@@ -855,7 +885,12 @@ void FullSystem::flagPointsForRemoval()
 }
 
 
-void FullSystem::addActiveFrame( ImageAndExposure* image, MinimalImageB3* gt_img, int id, int mode)
+void FullSystem::addActiveFrame(
+	ImageAndExposure* image,
+	MinimalImageB3* gt_img,
+	MinimalImage<unsigned short>* gt_depth,
+	int id,
+	int mode)
 {
 
     if(isLost) return;
@@ -872,8 +907,9 @@ void FullSystem::addActiveFrame( ImageAndExposure* image, MinimalImageB3* gt_img
     shell->incoming_id = id;
 	fh->shell = shell;
 	allFrameHistory.push_back(shell);
-	// gt img, for 2DGS
+	// gt img and depth, for 2DGS and RGB-D tracking
 	fh->kf_img = gt_img;
+	fh->kf_depth = gt_depth;
 	fh->exist_gt_img = true;
 
 	// =========================== make Images / derivatives etc. =========================
@@ -927,6 +963,8 @@ void FullSystem::addActiveFrame( ImageAndExposure* image, MinimalImageB3* gt_img
 			isLost=true;
             return;
         }
+
+		applyRGBDScaleCorrection(fh);
 
 		bool needToMakeKF = false;
 		if(setting_keyframesPerSecond > 0)
@@ -1314,6 +1352,7 @@ void FullSystem::makeKeyFrame( FrameHessian* fh)
 	FrozenFrameHessian* frozenFh = new FrozenFrameHessian();
 	frozenFh->camToWorld = fh->shell->camToWorld;
 	frozenFh->kfImg = fh->kf_img;
+	frozenFh->kfDepth = fh->kf_depth;
 	frozenFh->incomingID = fh->shell->incoming_id;
 	frameHessiansFrozen.push_back(frozenFh);
 
@@ -1668,6 +1707,7 @@ void FullSystem::makeKeyFrame( FrameHessian* fh)
 			newFh->kfSparseDepth = cv::Mat::zeros(gt_img->h, gt_img->w, CV_32FC1);
 			newFh->camToWorld = frameHessians[i]->shell->camToWorld;
 			newFh->kfImg = frameHessians[i]->kf_img;
+			newFh->kfDepth = frameHessians[i]->kf_depth;
 			newFh->incomingID = frameHessians[i]->shell->incoming_id;
 			newframeHessians.push_back(newFh);
 			if (!frameHessians[i]->pointHessians.empty()) {
@@ -1690,6 +1730,7 @@ void FullSystem::makeKeyFrame( FrameHessian* fh)
 					newFh->pointsInWorld.push_back(point_in_world.x());
 					newFh->pointsInWorld.push_back(point_in_world.y());
 					newFh->pointsInWorld.push_back(point_in_world.z());
+					newFh->pointSupportLevels.push_back(2);
 
 					// scales
 					Eigen::Vector3f scales = ph->eigenvalues.cwiseSqrt();
@@ -1759,6 +1800,7 @@ void FullSystem::makeKeyFrame( FrameHessian* fh)
 					newFh->pointsInWorld.push_back(point_in_world.x());
 					newFh->pointsInWorld.push_back(point_in_world.y());
 					newFh->pointsInWorld.push_back(point_in_world.z());
+					newFh->pointSupportLevels.push_back(1);
 
 					// scales
 					Eigen::Vector3f scales = ph->eigenvalues.cwiseSqrt();
@@ -1871,6 +1913,7 @@ void FullSystem::plotImagesWithCovariances(const std::vector<cv::Mat>& images,
                                            const std::vector<std::vector<std::pair<int, int>>>& imagePointsList,
                                            const std::unordered_map<std::string, std::vector<Eigen::Matrix2f>>& covariancesList,
                                            const std::vector<std::vector<Eigen::Matrix2f>>& allProjectedCovariances) {
+#if GSO_ENABLE_GUI
     for (size_t i = 0; i < images.size(); ++i) {
         cv::Mat displayImage;
         cvtColor(images[i], displayImage, cv::COLOR_GRAY2BGR);
@@ -1894,6 +1937,12 @@ void FullSystem::plotImagesWithCovariances(const std::vector<cv::Mat>& images,
     }
 
     cv::waitKey(0);
+#else
+    (void)images;
+    (void)imagePointsList;
+    (void)covariancesList;
+    (void)allProjectedCovariances;
+#endif
 }
 
 
@@ -2169,6 +2218,7 @@ void FullSystem::initializeFromInitializer(FrameHessian* newFrame)
 		FrozenFrameHessian* frozenFh = new FrozenFrameHessian();
 		frozenFh->camToWorld = firstFrame->shell->camToWorld;
 		frozenFh->kfImg = firstFrame->kf_img;
+		frozenFh->kfDepth = firstFrame->kf_depth;
 		frozenFh->incomingID = firstFrame->shell->incoming_id;
 		frameHessiansFrozen.push_back(frozenFh);
 	}

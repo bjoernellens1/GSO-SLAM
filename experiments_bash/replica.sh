@@ -1,15 +1,21 @@
 #!/bin/bash
 set -e
 
-REPLICA_DIR="../dataset/Replica"
-RESULT_DIR="./results/test"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPLICA_DIR="${REPO_DIR}/dataset/Replica"
+REPLICA_GAMMA="${REPLICA_DIR}/pcalib.txt"
+REPLICA_VIGNETTE="${REPLICA_DIR}/vignette.png"
+RESULT_DIR="${SCRIPT_DIR}/results/test"
 OUTPUT_TXT="${RESULT_DIR}/replica_results.txt"
+DATASETS="${DATASETS:-room0 room1 room2 office0 office1 office2 office3 office4}"
+EXTRA_ARGS="${EXTRA_ARGS:-}"
 
 mkdir -p "${RESULT_DIR}"
 
 echo "--- Replica Dataset Evaluation Start ---" > "${OUTPUT_TXT}"
 
-for dataset_name in "room0" "room1" "room2" "office0" "office1" "office2" "office3" "office4"
+for dataset_name in ${DATASETS}
 do
     DATASET_DIR="${REPLICA_DIR}/${dataset_name}"
     SAVE_PATH="${RESULT_DIR}/replica_${dataset_name}"
@@ -20,22 +26,23 @@ do
     echo "Processing: Replica ${dataset_name}"
     echo "Replica ${dataset_name}" >> "${OUTPUT_TXT}"
 
-    ../build/bin/dso_dataset \
+    "${REPO_DIR}/build/bin/dso_dataset" \
         files="${DATASET_DIR}/results" \
         calib="${DATASET_DIR}/camera.txt" \
-        gamma="${DATASET_DIR}/pcalib.txt" \
-        vignette="${DATASET_DIR}/vignette.png" \
+        gamma="${REPLICA_GAMMA}" \
+        vignette="${REPLICA_VIGNETTE}" \
         preset=0 \
         mode=2 \
         quiet=1 \
         nogui=1 \
         which_dataset=replica \
-        cfg_yaml="${HOME}/GSO_SLAM/cfg/gaussian_mapper/Monocular/Replica/replica_mono.yaml" \
+        cfg_yaml="${REPO_DIR}/cfg/gaussian_mapper/Monocular/Replica/replica_mono.yaml" \
         save_dir="${SAVE_PATH}" \
-        use_gaussian_viewer=0
+        use_gaussian_viewer=0 \
+        ${EXTRA_ARGS}
 
     echo "Evaluating ATE for ${dataset_name}..."
-    python3 -W ignore scripts/evaluate_ate_scale_replica.py \
+    python3 -W ignore "${SCRIPT_DIR}/scripts/evaluate_ate_scale_replica.py" \
         "${DATASET_DIR}/traj.txt" \
         "${SAVE_PATH}" >> "${OUTPUT_TXT}"
 

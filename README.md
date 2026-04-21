@@ -8,18 +8,22 @@
 
 <h3 align="center"> IEEE Robotics and Automation Letters, 2026 </h3>
 
-[Paper](https://arxiv.org/pdf/2602.11714) | [Video](https://www.youtube.com/watch?v=io5RmjNzkik&t) | [📚 Documentation](docs/index.md)
+[Paper](https://arxiv.org/pdf/2602.11714) | [Video](https://www.youtube.com/watch?v=io5RmjNzkik&t)
 
 </div>
 
-> **Documentation:** Full system documentation — including architecture, dependency map, Python wrapping, ROCm porting, Triton kernel analysis, ROS2 integration, and semantic mapping extension — is available in the [`docs/`](docs/) directory and can be built as a browseable site with [MkDocs](#documentation).
-
 ## Environments
+For a JupyterLab or other headless notebook server, build with GUI support disabled and a single CUDA architecture to keep compile memory well below the server limit.
+
+If you are setting up this workspace from scratch, the missing C++ dependencies can be installed into the current conda environment with:
+```bash
+mamba install -y -c conda-forge opencv jsoncpp boost-cpp eigen glm libzip suitesparse
+```
+
 ```bash
 sudo apt-get update && sudo apt-get install -y \
     libsuitesparse-dev libeigen3-dev libboost-all-dev \
-    libglm-dev libjsoncpp-dev libvtk9-dev libpcl-dev \
-    libopencv-dev libglfw3-dev libglew-dev libzip-dev libflann-dev
+    libglm-dev libjsoncpp-dev libopencv-dev libzip-dev
 ```
 Install [CUDA](https://developer.nvidia.com/cuda-11-8-0-download-archive) and [PyTorch](https://pytorch.org/get-started/locally/) respectively.
 We used CUDA Version: 11.8 and PyTorch Version: 2.2.2
@@ -41,9 +45,10 @@ bash preprocess.sh
 ### Build
 ```bash
 mkdir build && cd build
-cmake ..
-make -j$(nproc)
+cmake -DGSO_ENABLE_GUI=OFF -DGSO_ENABLE_RERUN=OFF -DGSO_CUDA_ARCHITECTURES=80 ..
+cmake --build . -j1
 ```
+The headless build is the default in this workspace. If CMake cannot find the conda packages automatically, point `CMAKE_PREFIX_PATH` at `${CONDA_PREFIX}` before configuring.
 ### Replica
 ```bash
 cd experiments_bash
@@ -54,54 +59,12 @@ bash replica.sh
 cd experiments_bash
 bash tum.sh
 ```
-If use_gaussian_viewer is set as 1, gaussian viewer will appear.
+`use_gaussian_viewer=1` is ignored in the headless build.
+For TUM data, the loader accepts the raw `rgb.txt` list used by the existing scripts, or a 4-column rgb/depth association file if you want depth paths available. For RGB-D processing, set `SLAM.sensor_type: rgbd` in the scene config and pass the association file.
 
 ## Evaluation
 ```bash
 cd experiments_bash
 bash replica_eval_rendering.sh
 bash replica_eval_depth.sh
-```
-
-## Container Quickstart
-Published GHCR images can be exercised with the Compose files in the repo:
-
-```bash
-docker compose -f compose.cuda.yml run --rm smoke
-docker compose -f compose.cuda.yml run --rm preprocess-datasets
-docker compose -f compose.cuda.yml run --rm -e GSO_REPLICA_SCENE=room0 replica-ate
-```
-
-For AMD GPUs, use `compose.rocm.yml`. Those services pass `/dev/kfd` and `/dev/dri` through for ROCm and are compatible with Podman's standard device mapping approach. Full details are in [`docs/container_quickstart.md`](docs/container_quickstart.md).
-
-For a GUI run with persisted output, build the local ROCm image and use `bash docker/run_rocm_gui_tum.sh`. It writes to `docker/results/tum_gui_test/` on the host instead of a container-local `/tmp` path.
-
-## Documentation
-
-Full documentation is in the [`docs/`](docs/) directory.
-
-| Section | Description |
-|---|---|
-| [Architecture](docs/architecture.md) | System design, thread model, data flows |
-| [Dependencies](docs/dependencies.md) | All libraries with versions |
-| [Python Wrapping](docs/python_wrapping.md) | pybind11 bindings |
-| [ROCm Port](docs/rocm_port.md) | AMD GPU porting guide |
-| [Triton Kernels](docs/triton_kernels.md) | GPU kernel feasibility |
-| [ROS2 Integration](docs/ros2_integration.md) | ROS2 node implementation |
-| [Semantic Mapping](docs/semantic_mapping.md) | OpenCLIP / DINO extension |
-| [API Reference](docs/api/index.md) | C++ API (Doxygen) |
-
-### Build the MkDocs site
-
-```bash
-pip install mkdocs mkdocs-material
-mkdocs serve        # live preview at http://127.0.0.1:8000
-mkdocs build        # static HTML in site/
-```
-
-### Build the C++ API reference (Doxygen)
-
-```bash
-sudo apt-get install doxygen graphviz
-doxygen Doxyfile    # HTML at docs/api/html/index.html
 ```

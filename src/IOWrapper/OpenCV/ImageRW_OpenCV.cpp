@@ -34,12 +34,12 @@ namespace dso
 
 namespace IOWrap
 {
-MinimalImageB* readImageBW_8U(std::string filename)
+MinimalImageB* readImageBW_8U(const char* filename)
 {
-	cv::Mat m = cv::imread(filename, cv::IMREAD_GRAYSCALE);
+	cv::Mat m = cv::imread(std::string(filename), cv::IMREAD_GRAYSCALE);
 	if(m.rows*m.cols==0)
 	{
-		printf("cv::imread could not read image %s! this may segfault. \n", filename.c_str());
+		printf("cv::imread could not read image %s! this may segfault. \n", filename);
 		return 0;
 	}
 	if(m.type() != CV_8U)
@@ -52,12 +52,12 @@ MinimalImageB* readImageBW_8U(std::string filename)
 	return img;
 }
 
-MinimalImageB3* readImageRGB_8U(std::string filename)
+MinimalImageB3* readImageRGB_8U(const char* filename)
 {
-	cv::Mat m = cv::imread(filename, cv::IMREAD_COLOR);
+	cv::Mat m = cv::imread(std::string(filename), cv::IMREAD_COLOR);
 	if(m.rows*m.cols==0)
 	{
-		printf("cv::imread could not read image %s! this may segfault. \n", filename.c_str());
+		printf("cv::imread could not read image %s! this may segfault. \n", filename);
 		return 0;
 	}
 	if(m.type() != CV_8UC3)
@@ -70,12 +70,12 @@ MinimalImageB3* readImageRGB_8U(std::string filename)
 	return img;
 }
 
-MinimalImageB3* readImageRGB_8U_resized(std::string filename, int width, int height)
+MinimalImageB3* readImageRGB_8U_resized(const char* filename, int width, int height)
 {
-	cv::Mat m = cv::imread(filename, cv::IMREAD_COLOR);
+	cv::Mat m = cv::imread(std::string(filename), cv::IMREAD_COLOR);
 	if(m.rows*m.cols==0)
 	{
-		printf("cv::imread could not read image %s! this may segfault. \n", filename.c_str());
+		printf("cv::imread could not read image %s! this may segfault. \n", filename);
 		return 0;
 	}
 	if(m.type() != CV_8UC3)
@@ -91,12 +91,12 @@ MinimalImageB3* readImageRGB_8U_resized(std::string filename, int width, int hei
 	return img;
 }
 
-MinimalImage<unsigned short>* readImageDepth_16U(std::string filename) {
+MinimalImage<unsigned short>* readImageDepth_16U(const char* filename) {
 
-    cv::Mat m = cv::imread(filename, cv::IMREAD_UNCHANGED);
+    cv::Mat m = cv::imread(std::string(filename), cv::IMREAD_UNCHANGED);
     if (m.empty()) 
 	{
-        printf("cv::imread could not read image %s! This may segfault.\n", filename.c_str());
+        printf("cv::imread could not read image %s! This may segfault.\n", filename);
         return nullptr;
     }
     if (m.type() != CV_16UC1) 
@@ -109,12 +109,12 @@ MinimalImage<unsigned short>* readImageDepth_16U(std::string filename) {
     return img;
 }
 
-MinimalImage<unsigned short>* readImageBW_16U(std::string filename)
+MinimalImage<unsigned short>* readImageBW_16U(const char* filename)
 {
-	cv::Mat m = cv::imread(filename, cv::IMREAD_UNCHANGED);
+	cv::Mat m = cv::imread(std::string(filename), cv::IMREAD_UNCHANGED);
 	if(m.rows*m.cols==0)
 	{
-		printf("cv::imread could not read image %s! this may segfault. \n", filename.c_str());
+		printf("cv::imread could not read image %s! this may segfault. \n", filename);
 		return 0;
 	}
 	if(m.type() != CV_16U)
@@ -191,21 +191,21 @@ MinimalImageB3* readStreamRGB_8U_resized(char* data, int numBytes, int width, in
     return img;
 }
 
-void writeImage(std::string filename, MinimalImageB* img)
+void writeImage(const char* filename, MinimalImageB* img)
 {
-	cv::imwrite(filename, cv::Mat(img->h, img->w, CV_8U, img->data));
+	cv::imwrite(std::string(filename), cv::Mat(img->h, img->w, CV_8U, img->data));
 }
-void writeImage(std::string filename, MinimalImageB3* img)
+void writeImage(const char* filename, MinimalImageB3* img)
 {
-	cv::imwrite(filename, cv::Mat(img->h, img->w, CV_8UC3, img->data));
+	cv::imwrite(std::string(filename), cv::Mat(img->h, img->w, CV_8UC3, img->data));
 }
-void writeImage(std::string filename, MinimalImageF* img)
+void writeImage(const char* filename, MinimalImageF* img)
 {
-	cv::imwrite(filename, cv::Mat(img->h, img->w, CV_32F, img->data));
+	cv::imwrite(std::string(filename), cv::Mat(img->h, img->w, CV_32F, img->data));
 }
-void writeImage(std::string filename, MinimalImageF3* img)
+void writeImage(const char* filename, MinimalImageF3* img)
 {
-	cv::imwrite(filename, cv::Mat(img->h, img->w, CV_32FC3, img->data));
+	cv::imwrite(std::string(filename), cv::Mat(img->h, img->w, CV_32FC3, img->data));
 }
 
 }

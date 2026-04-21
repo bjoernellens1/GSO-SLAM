@@ -84,7 +84,7 @@ def align(model,data):
         normi = numpy.linalg.norm(model_zerocentered[:,column])
         norms += normi*normi
 
-    s = float(dots/norms)    
+    s = float(numpy.asarray(dots / norms).squeeze())
 
     # print("scale: %f " % s  )
     

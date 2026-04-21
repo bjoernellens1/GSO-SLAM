@@ -23,9 +23,9 @@
 #include <vector>
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgproc/types_c.h>
+#include <opencv2/cudawarping.hpp>
 
 #include "types.h"
-#include "opencv_cuda_compat.h"
 #include "tensor_utils.h"
 
 class Camera
@@ -90,38 +90,47 @@ public:
 
         if (do_gaus_pyramid_training) {
             assert(!gaus_pyramid_height_.empty() && !gaus_pyramid_width_.empty());
-#if !GSO_HAS_OPENCV_CUDA
             gaus_pyramid_undistort_mask_.resize(num_gaus_pyramid_sub_levels_);
+            const bool use_opencv_cuda = []() {
+                try {
+                    return cv::cuda::getCudaEnabledDeviceCount() > 0;
+                } catch (const cv::Exception&) {
+                    return false;
+                }
+            }();
             for (int l = 0; l < num_gaus_pyramid_sub_levels_; ++l) {
                 cv::Mat undistort_mask_resized;
                 cv::resize(undistort_mask, undistort_mask_resized,
                            cv::Size(gaus_pyramid_width_[l], gaus_pyramid_height_[l]));
-                gaus_pyramid_undistort_mask_[l] =
-                    tensor_utils::cvMat2TorchTensor_Float32(undistort_mask_resized, torch::kCUDA);
+                if (use_opencv_cuda) {
+                    cv::cuda::GpuMat undistort_mask_gpu;
+                    cv::cuda::GpuMat undistort_mask_gpu_resized;
+                    undistort_mask_gpu.upload(undistort_mask_resized);
+                    cv::cuda::resize(undistort_mask_gpu, undistort_mask_gpu_resized,
+                                     cv::Size(gaus_pyramid_width_[l], gaus_pyramid_height_[l]));
+                    gaus_pyramid_undistort_mask_[l] =
+                        tensor_utils::cvGpuMat2TorchTensor_Float32(undistort_mask_gpu_resized);
+                } else {
+                    gaus_pyramid_undistort_mask_[l] =
+                        tensor_utils::cvMat2TorchTensor_Float32(
+                            undistort_mask_resized,
+                            torch::cuda::is_available() ? torch::kCUDA : torch::kCPU);
+                }
             }
-#else
-            cv::cuda::GpuMat undistort_mask_gpu;
-            undistort_mask_gpu.upload(undistort_mask);
-            gaus_pyramid_undistort_mask_.resize(num_gaus_pyramid_sub_levels_);
-            for (int l = 0; l < num_gaus_pyramid_sub_levels_; ++l) {
-                cv::cuda::GpuMat undistort_mask_gpu_resized;
-                cv::cuda::resize(undistort_mask_gpu, undistort_mask_gpu_resized,
-                                 cv::Size(gaus_pyramid_width_[l], gaus_pyramid_height_[l]));
-                gaus_pyramid_undistort_mask_[l] =
-                    tensor_utils::cvGpuMat2TorchTensor_Float32(undistort_mask_gpu_resized);
-            }
-#endif
         }
     }
 
-    inline void undistortImage(cv::InputArray src, cv::OutputArray dst)
+    inline void undistortImage(
+        cv::InputArray src,
+        cv::OutputArray dst,
+        int interpolation = cv::InterpolationFlags::INTER_LINEAR)
     {
         cv::remap(
             src,
             dst,
             undistort_map1,
             undistort_map2,
-            cv::InterpolationFlags::INTER_LINEAR
+            interpolation
         );
     }
 

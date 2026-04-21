@@ -25,7 +25,9 @@
 #pragma once
 #define MAX_ACTIVE_FRAMES 100
 
- 
+#include <cassert>
+#include <cstdint>
+
 #include "util/globalCalib.h"
 #include "vector"
  
@@ -253,6 +255,10 @@ struct FrameHessian
 		frameID = -1;
 		efFrame = 0;
 		frameEnergyTH = 8*8*patternNum;
+		input_img = 0;
+		kf_img = 0;
+		kf_depth = 0;
+		exist_gt_img = false;
 
 
 
@@ -508,9 +514,10 @@ struct FrozenFrameHessian
 {
 	EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
 	SE3 camToWorld;				// cam to world
-	int incomingID;
+	int incomingID = -1;
 
-	MinimalImageB3* kfImg;		// observed image
+	MinimalImageB3* kfImg = 0;		// observed image
+	MinimalImage<unsigned short>* kfDepth = 0; // observed depth image
 	cv::Mat kfSparseDepth;	// sparse depth image
 
 	bool isServed = false;
@@ -518,12 +525,13 @@ struct FrozenFrameHessian
 	// points
 	std::vector<float> pointsInCam;		// points in the camera coordinate
 	std::vector<float> pointsInWorld;	// points in the world coordinate
+	std::vector<float> pointPixels;		// pixel coordinates (u, v) for each point
 	std::vector<float> colors;
 	std::vector<float> scales;
 	std::vector<float> rots;
+	std::vector<uint8_t> pointSupportLevels; // 2 = active, 1 = marginalized
 };
 
 
 
 }
-

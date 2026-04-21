@@ -11,48 +11,19 @@
 
 #define BOX_SIZE 1024
 
-#ifdef USE_ROCM
-#include <hip/hip_runtime.h>
-#include "simple_knn.h"
-#include <cfloat>
-#include <hipcub/hipcub.hpp>
-#include <vector>
-#include <thrust/device_vector.h>
-#include <thrust/sequence.h>
-#include <hip/hip_cooperative_groups.h>
-
-namespace cub = hipcub;
-#ifndef cudaMalloc
-#define cudaMalloc hipMalloc
-#endif
-#ifndef cudaMemcpy
-#define cudaMemcpy hipMemcpy
-#endif
-#ifndef cudaMemcpyDeviceToHost
-#define cudaMemcpyDeviceToHost hipMemcpyDeviceToHost
-#endif
-#ifndef cudaFree
-#define cudaFree hipFree
-#endif
-#define SIMPLE_KNN_LAUNCH(kernel, grid, block, ...) \
-	hipLaunchKernelGGL(kernel, dim3(grid), dim3(block), 0, 0, __VA_ARGS__)
-#else
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include "simple_knn.h"
-#include <cfloat>
 #include <cub/cub.cuh>
 #include <cub/device/device_radix_sort.cuh>
 #include <vector>
+#include <cfloat>
 #include <cuda_runtime_api.h>
 #include <thrust/device_vector.h>
 #include <thrust/sequence.h>
 #define __CUDACC__
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
-#define SIMPLE_KNN_LAUNCH(kernel, grid, block, ...) \
-	kernel<<<grid, block>>>(__VA_ARGS__)
-#endif
 
 namespace cg = cooperative_groups;
 
@@ -231,7 +202,7 @@ void SimpleKNN::knn(int P, float3* points, float* meanDists)
 
 	thrust::device_vector<uint32_t> morton(P);
 	thrust::device_vector<uint32_t> morton_sorted(P);
-	SIMPLE_KNN_LAUNCH(coord2Morton, (P + 255) / 256, 256, P, points, minn, maxx, morton.data().get());
+	coord2Morton << <(P + 255) / 256, 256 >> > (P, points, minn, maxx, morton.data().get());
 
 	thrust::device_vector<uint32_t> indices(P);
 	thrust::sequence(indices.begin(), indices.end());
@@ -244,8 +215,8 @@ void SimpleKNN::knn(int P, float3* points, float* meanDists)
 
 	uint32_t num_boxes = (P + BOX_SIZE - 1) / BOX_SIZE;
 	thrust::device_vector<MinMax> boxes(num_boxes);
-	SIMPLE_KNN_LAUNCH(boxMinMax, num_boxes, BOX_SIZE, P, points, indices_sorted.data().get(), boxes.data().get());
-	SIMPLE_KNN_LAUNCH(boxMeanDist, num_boxes, BOX_SIZE, P, points, indices_sorted.data().get(), boxes.data().get(), meanDists);
+	boxMinMax << <num_boxes, BOX_SIZE >> > (P, points, indices_sorted.data().get(), boxes.data().get());
+	boxMeanDist << <num_boxes, BOX_SIZE >> > (P, points, indices_sorted.data().get(), boxes.data().get(), meanDists);
 
 	cudaFree(result);
 }
