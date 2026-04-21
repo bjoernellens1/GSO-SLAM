@@ -99,18 +99,19 @@ public:
                 }
             }();
             for (int l = 0; l < num_gaus_pyramid_sub_levels_; ++l) {
-                cv::Mat undistort_mask_resized;
-                cv::resize(undistort_mask, undistort_mask_resized,
-                           cv::Size(gaus_pyramid_width_[l], gaus_pyramid_height_[l]));
                 if (use_opencv_cuda) {
+                    // Upload original to GPU and resize only once on GPU.
                     cv::cuda::GpuMat undistort_mask_gpu;
                     cv::cuda::GpuMat undistort_mask_gpu_resized;
-                    undistort_mask_gpu.upload(undistort_mask_resized);
+                    undistort_mask_gpu.upload(undistort_mask);
                     cv::cuda::resize(undistort_mask_gpu, undistort_mask_gpu_resized,
                                      cv::Size(gaus_pyramid_width_[l], gaus_pyramid_height_[l]));
                     gaus_pyramid_undistort_mask_[l] =
                         tensor_utils::cvGpuMat2TorchTensor_Float32(undistort_mask_gpu_resized);
                 } else {
+                    cv::Mat undistort_mask_resized;
+                    cv::resize(undistort_mask, undistort_mask_resized,
+                               cv::Size(gaus_pyramid_width_[l], gaus_pyramid_height_[l]));
                     gaus_pyramid_undistort_mask_[l] =
                         tensor_utils::cvMat2TorchTensor_Float32(
                             undistort_mask_resized,

@@ -178,6 +178,7 @@ public:
 
     float percentDense();
     void setPercentDense(const float percent_dense);
+    void setEnableRgbDepthEvidenceGating(bool enable) { enable_rgbd_depth_evidence_densification_ = enable; }
 
 protected:
     float exponLrFunc(int step);
@@ -214,6 +215,7 @@ public:
 
     torch::Tensor sparse_points_xyz_;
     torch::Tensor sparse_points_color_;
+    bool enable_rgbd_depth_evidence_densification_ = false;
 
 protected:
     float lr_init_;

@@ -70,6 +70,7 @@ public:
 			CalibHessian* HCalib);
 
 	bool debugPrint, debugPlot;
+	int normDebugCount_ = 0;
 
 	Mat33f K[PYR_LEVELS];
 	Mat33f Ki[PYR_LEVELS];

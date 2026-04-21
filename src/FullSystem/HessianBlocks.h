@@ -513,11 +513,13 @@ struct PointHessian
 struct FrozenFrameHessian
 {
 	EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
+	~FrozenFrameHessian() { delete kfDepth; }
+
 	SE3 camToWorld;				// cam to world
 	int incomingID = -1;
 
 	MinimalImageB3* kfImg = 0;		// observed image
-	MinimalImage<unsigned short>* kfDepth = 0; // observed depth image
+	MinimalImage<unsigned short>* kfDepth = 0; // observed depth image; owned, deleted in destructor
 	cv::Mat kfSparseDepth;	// sparse depth image
 
 	bool isServed = false;

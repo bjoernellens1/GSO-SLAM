@@ -1169,7 +1169,10 @@ void GaussianModel::densifyAndSplit(
         selected_pts_mask,
         std::get<0>(torch::max(this->getScalingActivation(), /*dim=*/1)) > percentDense() * scene_extent
     );
-    if (support_hits_.numel() == this->getXYZ().size(0)) {
+    // Only gate densification with depth evidence in RGBD mode.
+    // support_hits_ is only populated when depth-evidence tracking is active,
+    // and is empty (numel()==0) for monocular / non-RGBD runs.
+    if (enable_rgbd_depth_evidence_densification_ && support_hits_.numel() == this->getXYZ().size(0)) {
         selected_pts_mask = torch::logical_and(
             selected_pts_mask,
             support_hits_ >= 2);
@@ -1218,7 +1221,10 @@ void GaussianModel::densifyAndClone(
         selected_pts_mask,
         std::get<0>(torch::max(this->getScalingActivation(), /*dim=*/1)) <= percentDense() * scene_extent
     );
-    if (support_hits_.numel() == this->getXYZ().size(0)) {
+    // Only gate densification with depth evidence in RGBD mode.
+    // support_hits_ is only populated when depth-evidence tracking is active,
+    // and is empty (numel()==0) for monocular / non-RGBD runs.
+    if (enable_rgbd_depth_evidence_densification_ && support_hits_.numel() == this->getXYZ().size(0)) {
         selected_pts_mask = torch::logical_and(
             selected_pts_mask,
             support_hits_ >= 2);

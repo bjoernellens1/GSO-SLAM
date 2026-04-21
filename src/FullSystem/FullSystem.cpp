@@ -470,6 +470,17 @@ Vec4 FullSystem::trackNewCoarse(FrameHessian* fh)
 
 void FullSystem::applyRGBDScaleCorrection(FrameHessian* fh)
 {
+	// NOTE: This function applies a scale correction to fh's pose after
+	// trackNewCoarse() has already committed to an uncorrected estimate.
+	// DSO's downstream operations (tracing, BA, marginalization) use
+	// fh->shell->camToWorld, so this post-hoc correction could in principle
+	// corrupt DSO's internal bookkeeping. Additionally, the scale ratio is
+	// derived from the reference frame's (lastRef) DSO/RGBD idepth comparison,
+	// not from the current frame's own depth — a scale ratio computed from
+	// the current depth vs. the DSO pose estimate would be more direct.
+	// This approach was chosen because the DSO idepth at the reference frame
+	// is the most well-constrained, but the timing and data-choice assumptions
+	// should be validated empirically before relying on this for critical tasks.
 	if(setting_rgbdTrackingMode <= 0) return;
 
 	float medianRatio = coarseTracker->computeRGBDScaleRatio();

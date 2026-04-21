@@ -946,9 +946,7 @@ void GaussianMapper::readConfigFromFile(std::filesystem::path cfg_path)
     opt_params_.lambda_dssim_ = getRequiredValue<float>(settings_file, "Optimization.lambda_dssim");
     opt_params_.densification_interval_ = getRequiredValue<int>(settings_file, "Optimization.densification_interval");
     opt_params_.opacity_reset_interval_ = getRequiredValue<int>(settings_file, "Optimization.opacity_reset_interval");
-    opt_params_.densify_from_iter_ = getRequiredValue<int>(
-        settings_file,
-        settings_file.count("Optimization.densify_from_iter") ? "Optimization.densify_from_iter" : "Optimization.densify_from_iter_");
+    opt_params_.densify_from_iter_ = getRequiredValue<int>(settings_file, "Optimization.densify_from_iter");
     opt_params_.densify_until_iter_ = getRequiredValue<int>(settings_file, "Optimization.densify_until_iter");
     opt_params_.densify_grad_threshold_ = getRequiredValue<float>(settings_file, "Optimization.densify_grad_threshold");
 
@@ -983,18 +981,22 @@ void GaussianMapper::readConfigFromFile(std::filesystem::path cfg_path)
         sensor_type_ = parseSensorType(sensor_type_it->second);
     }
 
+    // Wire RGBD depth-evidence gating to GaussianModel so that densification
+    // is not blocked by support_hits_ checks in non-RGBD (monocular) mode.
+    if (sensor_type_ == RGBD) {
+        gaussians_->setEnableRgbDepthEvidenceGating(true);
+    }
+
     depth_scale = getOptionalValue<float>(settings_file, "SLAM.depth_scale", 1000.0f);
 }
 
 void GaussianMapper::run()
 {
     std::cout << "!!! GaussianMapper::run" << std::endl;
-    std::cout << "[DEBUG] sensor_type_=" << sensor_type_ << " (RGBD=" << RGBD << ")" << std::endl;
     // First loop: Initial gaussian mapping
     while (!isStopped()) {
         // Check conditions for initial mapping
         if (hasMetInitialMappingConditions()) {
-            std::cout << "[DEBUG] hasMetInitialMappingConditions=true" << std::endl;
             // Get initial map
             std::vector<float> new_points;
             std::vector<float> new_colors;
@@ -1114,30 +1116,8 @@ void GaussianMapper::run()
                             tensor_utils::cvMat2TorchTensor_Float32(imgRGB_undistorted, device_type_);
 
                         if (sensor_type_ == RGBD) {
-                            if (imgAux_undistorted.empty()) {
-                                float raw_alignment_scale = 1.0f;
-                                int num_alignment_samples = 0;
-                                imgAux_undistorted = prepareAlignedRgbdDepthImage(
-                                    fh->kfDepth,
-                                    fh->kfSparseDepth,
-                                    camera,
-                                    need_distortion,
-                                    depth_scale,
-                                    imgRGB_undistorted.size(),
-                                    fh->incomingID,
-                                    RGBD_min_depth_,
-                                    RGBD_max_depth_,
-                                    &raw_alignment_scale,
-                                    &num_alignment_samples,
-                                    false);
-                                const float smoothed_alignment_scale = stabilizeRgbdAlignmentScale(
-                                    raw_alignment_scale,
-                                    num_alignment_samples,
-                                    fh->incomingID);
-                                if (smoothed_alignment_scale != 1.0f) {
-                                    imgAux_undistorted *= smoothed_alignment_scale;
-                                }
-                            }
+                            // imgAux_undistorted was already prepared above (lines ~1069-1089).
+                            // The previous dead code block that re-computed it here has been removed.
                             new_kf->original_depth_ =
                                 tensor_utils::cvMat2TorchTensor_Float32(imgAux_undistorted, device_type_);
                         } else {

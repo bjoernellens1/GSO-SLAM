@@ -247,7 +247,6 @@ void CoarseTracker::makeCoarseDepthL0(std::vector<FrameHessian*> frameHessians)
 
 	// normalize idepths and weights.
 	// Prefer RGB-D idepth where available (metric scale), fall back to DSO idepth.
-	static int normDebugCount = 0;
 	int rgbdCount = 0, dsoCount = 0;
 	for(int lvl=0; lvl<pyrLevelsUsed; lvl++)
 	{
@@ -308,8 +307,9 @@ void CoarseTracker::makeCoarseDepthL0(std::vector<FrameHessian*> frameHessians)
 		pc_n[lvl] = lpc_n;
 	}
 
-	if(normDebugCount++ < 5)
-		printf("[RGB-D] Norm lvl0: rgbd=%d dso=%d total=%d\n", rgbdCount, dsoCount, rgbdCount+dsoCount);
+	// Note: rgbdCount and dsoCount accumulate across ALL pyramid levels.
+	if(normDebugCount_++ < 5)
+		printf("[RGB-D] Norm (all lvl): rgbd=%d dso=%d total=%d\n", rgbdCount, dsoCount, rgbdCount+dsoCount);
 
 }
 
