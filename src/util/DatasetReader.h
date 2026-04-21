@@ -360,6 +360,8 @@ public:
 
 	// undistorter. [0] always exists, [1-2] only when MT is enabled.
 	Undistort* undistort;
+
+	bool depthFilesEmpty() const { return depth_files.empty(); }
 private:
 
 
@@ -554,7 +556,6 @@ private:
 
 	std::vector<ImageAndExposure*> preloadedImages;
 	std::vector<std::string> files;
-	std::vector<std::string> depth_files;
 	std::vector<double> timestamps;
 	std::vector<float> exposures;
 	std::vector<double> timestamps_foreval;
@@ -571,4 +572,6 @@ private:
 	zip_t* ziparchive;
 	char* databuffer;
 #endif
+
+	std::vector<std::string> depth_files;
 };

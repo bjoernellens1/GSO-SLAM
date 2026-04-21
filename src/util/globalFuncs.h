@@ -24,6 +24,7 @@
 
 
 #pragma once
+#include <cassert>
 #include "util/settings.h"
 #include "util/NumType.h"
 #include "IOWrapper/ImageDisplay.h"

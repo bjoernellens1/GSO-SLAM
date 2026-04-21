@@ -139,6 +139,19 @@ void writePngImage(const cv::Mat& image, const std::filesystem::path& path, bool
     } else if (image.type() == CV_16UC1) {
         color_type = PNG_COLOR_TYPE_GRAY;
         bit_depth = 16;
+        // PNG requires big-endian byte order for 16-bit values, but cv::Mat
+        // stores data in native (little-endian on x86) byte order.
+        // Byte-swap each 16-bit value before writing.
+        cv::Mat swapped;
+        image.convertTo(swapped, CV_16UC1);
+        for (int y = 0; y < swapped.rows; ++y) {
+            uint16_t* row = swapped.ptr<uint16_t>(y);
+            for (int x = 0; x < swapped.cols; ++x) {
+                row[x] = (row[x] >> 8) | (row[x] << 8);
+            }
+        }
+        converted = swapped;
+        png_image = &converted;
     } else if (image.type() == CV_8UC4 && assume_bgr) {
         cv::cvtColor(image, converted, cv::COLOR_BGRA2RGBA);
         png_image = &converted;
@@ -724,6 +737,12 @@ GaussianMapper::GaussianMapper(
     gaussians_ = std::make_shared<GaussianModel>(model_params_);
     scene_ = std::make_shared<GaussianScene>(model_params_);
 
+    // Wire RGBD depth-evidence gating to GaussianModel so that densification
+    // is not blocked by support_hits_ checks in non-RGBD (monocular) mode.
+    if (sensor_type_ == RGBD) {
+        gaussians_->setEnableRgbDepthEvidenceGating(true);
+    }
+
     // Mode
     if (!pSLAM) {
         // NO SLAM
@@ -865,6 +884,11 @@ float GaussianMapper::stabilizeRgbdAlignmentScale(
     return rgbd_alignment_scale_;
 }
 
+float GaussianMapper::getRgbdAlignmentScale() const
+{
+    return rgbd_alignment_scale_initialized_ ? rgbd_alignment_scale_ : 1.0f;
+}
+
 void GaussianMapper::readConfigFromFile(std::filesystem::path cfg_path)
 {
     const auto settings_file = loadScalarMap(cfg_path);
@@ -979,12 +1003,6 @@ void GaussianMapper::readConfigFromFile(std::filesystem::path cfg_path)
     const auto sensor_type_it = settings_file.find("SLAM.sensor_type");
     if (sensor_type_it != settings_file.end()) {
         sensor_type_ = parseSensorType(sensor_type_it->second);
-    }
-
-    // Wire RGBD depth-evidence gating to GaussianModel so that densification
-    // is not blocked by support_hits_ checks in non-RGBD (monocular) mode.
-    if (sensor_type_ == RGBD) {
-        gaussians_->setEnableRgbDepthEvidenceGating(true);
     }
 
     depth_scale = getOptionalValue<float>(settings_file, "SLAM.depth_scale", 1000.0f);
@@ -1761,13 +1779,14 @@ void GaussianMapper::combineMappingOperations()
                                     &raw_alignment_scale,
                                     &num_alignment_samples,
                                     false);
-                                const float smoothed_alignment_scale = stabilizeRgbdAlignmentScale(
-                                    raw_alignment_scale,
-                                    num_alignment_samples,
-                                    fh->incomingID);
-                                if (smoothed_alignment_scale != 1.0f) {
-                                    imgAux_undistorted *= smoothed_alignment_scale;
-                                }
+                            const float smoothed_alignment_scale = stabilizeRgbdAlignmentScale(
+                                raw_alignment_scale,
+                                num_alignment_samples,
+                                fh->incomingID);
+                            if (smoothed_alignment_scale != 1.0f) {
+                                imgAux_undistorted *= smoothed_alignment_scale;
+                            }
+                            pSLAM_->setRgbdAlignmentScaleFromMapper(smoothed_alignment_scale);
                             }
                             new_kf->original_depth_ =
                                 tensor_utils::cvMat2TorchTensor_Float32(imgAux_undistorted, device_type_);

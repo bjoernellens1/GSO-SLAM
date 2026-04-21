@@ -867,7 +867,7 @@ int main( int argc, char** argv )
 			// for demo video
 			gt_img = reader->getImageRawRGB(i);
 			// load raw depth for RGB-D tracking (null when depth_files is empty)
-			gt_depth = reader->depth_files.empty() ? nullptr : reader->getImageRawDepth(i);
+			gt_depth = reader->depthFilesEmpty() ? nullptr : reader->getImageRawDepth(i);
 
             bool skipFrame=false;
             if(playbackSpeed!=0)

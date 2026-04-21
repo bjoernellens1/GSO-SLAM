@@ -244,6 +244,8 @@ protected:
         std::size_t frame_id);
     void pruneGeometryOutliers();
 
+    float getRgbdAlignmentScale() const;
+
     void savePly(std::filesystem::path result_dir);
     void keyframesToJson(std::filesystem::path result_dir);
     void saveModelParams(std::filesystem::path result_dir);
