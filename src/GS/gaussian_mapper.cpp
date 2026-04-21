@@ -199,6 +199,14 @@ void appendSeedGeometry(
     const bool use_imported_seed_geometry,
     const bool seed_only_active_points,
     const float seed_isotropic_scale,
+    const SystemSensorType sensor_type,
+    const cv::Mat& aligned_depth,
+    const double fx,
+    const double fy,
+    const double cx,
+    const double cy,
+    const float rgbd_min_depth,
+    const float rgbd_max_depth,
     std::vector<float>& new_points,
     std::vector<float>& new_colors,
     std::vector<float>& new_scales,
@@ -208,6 +216,8 @@ void appendSeedGeometry(
     const bool have_support_levels = fh->pointSupportLevels.size() == num_points;
     const bool have_imported_geometry =
         fh->scales.size() == num_points * 2 && fh->rots.size() == num_points * 4;
+    const bool have_point_pixels = fh->pointPixels.size() == num_points * 2;
+    constexpr float kSeedDepthConsistencyRelTol = 0.25f;
 
     new_points.reserve(new_points.size() + fh->pointsInWorld.size());
     new_colors.reserve(new_colors.size() + fh->colors.size());
@@ -220,9 +230,45 @@ void appendSeedGeometry(
             continue;
         }
 
-        new_points.push_back(fh->pointsInWorld[i * 3 + 0]);
-        new_points.push_back(fh->pointsInWorld[i * 3 + 1]);
-        new_points.push_back(fh->pointsInWorld[i * 3 + 2]);
+        Eigen::Vector3d point_in_world(
+            fh->pointsInWorld[i * 3 + 0],
+            fh->pointsInWorld[i * 3 + 1],
+            fh->pointsInWorld[i * 3 + 2]);
+
+        if (sensor_type == RGBD && have_point_pixels && !aligned_depth.empty() && !fh->kfSparseDepth.empty()) {
+            const int u = static_cast<int>(std::lround(fh->pointPixels[i * 2 + 0]));
+            const int v = static_cast<int>(std::lround(fh->pointPixels[i * 2 + 1]));
+            if (u >= 0 && v >= 0 && u < aligned_depth.cols && v < aligned_depth.rows) {
+                const float aligned_depth_value = aligned_depth.at<float>(v, u);
+                const float sparse_depth_value = fh->kfSparseDepth.at<float>(v, u);
+                const bool aligned_valid = std::isfinite(aligned_depth_value)
+                    && aligned_depth_value > rgbd_min_depth
+                    && aligned_depth_value < rgbd_max_depth;
+                const bool sparse_valid = std::isfinite(sparse_depth_value)
+                    && sparse_depth_value > 0.0f
+                    && sparse_depth_value < rgbd_max_depth;
+
+                if (aligned_valid) {
+                    if (sparse_valid) {
+                        const float rel_error = std::abs(aligned_depth_value - sparse_depth_value)
+                            / std::max(std::max(aligned_depth_value, sparse_depth_value), 1e-6f);
+                        if (rel_error > kSeedDepthConsistencyRelTol) {
+                            continue;
+                        }
+                    }
+
+                    const double x = ((static_cast<double>(u) - cx) / fx) * aligned_depth_value;
+                    const double y = ((static_cast<double>(v) - cy) / fy) * aligned_depth_value;
+                    point_in_world = fh->camToWorld * Eigen::Vector3d(x, y, aligned_depth_value);
+                } else if (!sparse_valid) {
+                    continue;
+                }
+            }
+        }
+
+        new_points.push_back(static_cast<float>(point_in_world.x()));
+        new_points.push_back(static_cast<float>(point_in_world.y()));
+        new_points.push_back(static_cast<float>(point_in_world.z()));
 
         new_colors.push_back(fh->colors[i * 3 + 0]);
         new_colors.push_back(fh->colors[i * 3 + 1]);
@@ -244,6 +290,189 @@ void appendSeedGeometry(
             new_rots.push_back(0.0f);
         }
     }
+}
+
+cv::Mat prepareUndistortedRgbImage(
+    const dso::MinimalImageB3* image,
+    Camera& camera,
+    const bool need_distortion)
+{
+    if (image == nullptr) {
+        throw std::runtime_error("[Gaussian Mapper]Missing RGB keyframe image.");
+    }
+
+    cv::Mat rgb_u8(image->h, image->w, CV_8UC3, image->data);
+    cv::Mat rgb_undistorted;
+    if (need_distortion) {
+        camera.undistortImage(rgb_u8, rgb_undistorted);
+    } else {
+        rgb_undistorted = rgb_u8;
+    }
+
+    cv::Mat rgb_float;
+    rgb_undistorted.convertTo(rgb_float, CV_32FC3, 1.0 / 255.0);
+    return rgb_float;
+}
+
+cv::Mat prepareUndistortedDepthImage(
+    const dso::MinimalImage<unsigned short>* depth_image,
+    Camera& camera,
+    const bool need_distortion,
+    const float depth_scale,
+    const cv::Size fallback_size,
+    const std::size_t frame_id)
+{
+    if (depth_image == nullptr) {
+        std::cerr << "[Gaussian Mapper]RGB-D keyframe " << frame_id
+                  << " has no raw depth image. Disabling RGB-D densification for this keyframe."
+                  << std::endl;
+        return cv::Mat::zeros(fallback_size, CV_32FC1);
+    }
+
+    cv::Mat depth_u16(depth_image->h, depth_image->w, CV_16UC1, depth_image->data);
+    cv::Mat depth_undistorted;
+    if (need_distortion) {
+        camera.undistortImage(
+            depth_u16,
+            depth_undistorted,
+            cv::InterpolationFlags::INTER_NEAREST);
+    } else {
+        depth_undistorted = depth_u16;
+    }
+
+    cv::Mat depth_float;
+    depth_undistorted.convertTo(depth_float, CV_32FC1, 1.0 / depth_scale);
+    return depth_float;
+}
+
+float estimateDepthAlignmentScale(
+    const cv::Mat& sparse_depth,
+    const cv::Mat& rgbd_depth,
+    const float min_depth,
+    const float max_depth,
+    int* num_supporting_samples = nullptr)
+{
+    constexpr int kMinSamples = 32;
+    if (num_supporting_samples != nullptr) {
+        *num_supporting_samples = 0;
+    }
+    if (sparse_depth.empty() || rgbd_depth.empty() ||
+        sparse_depth.size() != rgbd_depth.size() ||
+        sparse_depth.type() != CV_32FC1 || rgbd_depth.type() != CV_32FC1) {
+        return 1.0f;
+    }
+
+    std::vector<float> ratios;
+    ratios.reserve(4096);
+    for (int y = 0; y < sparse_depth.rows; ++y) {
+        const float* sparse_row = sparse_depth.ptr<float>(y);
+        const float* rgbd_row = rgbd_depth.ptr<float>(y);
+        for (int x = 0; x < sparse_depth.cols; ++x) {
+            const float sparse = sparse_row[x];
+            const float rgbd = rgbd_row[x];
+            if (!std::isfinite(sparse) || !std::isfinite(rgbd) ||
+                sparse <= 0.0f || rgbd <= min_depth || rgbd >= max_depth) {
+                continue;
+            }
+            ratios.push_back(sparse / rgbd);
+        }
+    }
+
+    if (static_cast<int>(ratios.size()) < kMinSamples) {
+        return 1.0f;
+    }
+
+    const auto median_it = ratios.begin() + ratios.size() / 2;
+    std::nth_element(ratios.begin(), median_it, ratios.end());
+    const float median_ratio = *median_it;
+    if (!std::isfinite(median_ratio) || median_ratio <= 0.0f) {
+        return 1.0f;
+    }
+
+    std::vector<float> refined;
+    refined.reserve(ratios.size());
+    const float lo = median_ratio * 0.5f;
+    const float hi = median_ratio * 1.5f;
+    for (const float ratio : ratios) {
+        if (std::isfinite(ratio) && ratio >= lo && ratio <= hi) {
+            refined.push_back(ratio);
+        }
+    }
+    if (static_cast<int>(refined.size()) < kMinSamples) {
+        refined = std::move(ratios);
+    }
+
+    const auto refined_median_it = refined.begin() + refined.size() / 2;
+    std::nth_element(refined.begin(), refined_median_it, refined.end());
+    const float refined_median = *refined_median_it;
+    if (num_supporting_samples != nullptr) {
+        *num_supporting_samples = static_cast<int>(refined.size());
+    }
+    if (!std::isfinite(refined_median) || refined_median <= 0.0f) {
+        return 1.0f;
+    }
+
+    return std::clamp(refined_median, 0.1f, 10.0f);
+}
+
+float medianOfVector(std::vector<float> values)
+{
+    if (values.empty()) {
+        return 1.0f;
+    }
+
+    const auto middle = values.begin() + values.size() / 2;
+    std::nth_element(values.begin(), middle, values.end());
+    return *middle;
+}
+
+cv::Mat prepareAlignedRgbdDepthImage(
+    const dso::MinimalImage<unsigned short>* depth_image,
+    const cv::Mat& sparse_depth,
+    Camera& camera,
+    const bool need_distortion,
+    const float depth_scale,
+    const cv::Size fallback_size,
+    const std::size_t frame_id,
+    const float min_depth,
+    const float max_depth,
+    float* alignment_scale = nullptr,
+    int* num_supporting_samples_out = nullptr,
+    bool apply_alignment_scale = true)
+{
+    cv::Mat depth_float = prepareUndistortedDepthImage(
+        depth_image,
+        camera,
+        need_distortion,
+        depth_scale,
+        fallback_size,
+        frame_id);
+
+    int num_supporting_samples = 0;
+    const float scale = estimateDepthAlignmentScale(
+        sparse_depth,
+        depth_float,
+        min_depth,
+        max_depth,
+        &num_supporting_samples);
+    if (num_supporting_samples_out != nullptr) {
+        *num_supporting_samples_out = num_supporting_samples;
+    }
+    if (alignment_scale != nullptr) {
+        *alignment_scale = scale;
+    }
+    if (apply_alignment_scale && scale != 1.0f) {
+        depth_float *= scale;
+    }
+    if (apply_alignment_scale &&
+        num_supporting_samples >= 32 &&
+        std::abs(scale - 1.0f) > 0.05f) {
+        std::cout << "[Gaussian Mapper]Keyframe " << frame_id
+                  << " aligned RGB-D depth by " << scale
+                  << " using " << num_supporting_samples
+                  << " sparse depth samples." << std::endl;
+    }
+    return depth_float;
 }
 
 Sophus::SE3d pullBackPoseAlongViewingDirection(const Sophus::SE3f& Tcw, double pullback_m)
@@ -268,11 +497,17 @@ Eigen::Vector3d estimateSceneCenter(
         auto points = gaussians->getXYZ();
         if (points.numel() > 0) {
             auto points_cpu = points.detach().to(torch::kCPU);
-            Eigen::Vector3d center;
-            center.x() = points_cpu.index({torch::indexing::Slice(), 0}).mean().item<double>();
-            center.y() = points_cpu.index({torch::indexing::Slice(), 1}).mean().item<double>();
-            center.z() = points_cpu.index({torch::indexing::Slice(), 2}).mean().item<double>();
-            return center;
+            auto finite_mask = torch::isfinite(points_cpu).all(1);
+            auto finite_points = points_cpu.index({finite_mask});
+            if (finite_points.numel() > 0) {
+                Eigen::Vector3d center;
+                center.x() = finite_points.index({torch::indexing::Slice(), 0}).mean().item<double>();
+                center.y() = finite_points.index({torch::indexing::Slice(), 1}).mean().item<double>();
+                center.z() = finite_points.index({torch::indexing::Slice(), 2}).mean().item<double>();
+                if (std::isfinite(center.x()) && std::isfinite(center.y()) && std::isfinite(center.z())) {
+                    return center;
+                }
+            }
         }
     }
 
@@ -599,6 +834,37 @@ GaussianMapper::GaussianMapper(
     this->scene_->addCamera(camera);
 }
 
+float GaussianMapper::stabilizeRgbdAlignmentScale(
+    float raw_scale,
+    int num_supporting_samples,
+    std::size_t frame_id)
+{
+    constexpr int kMinReliableSamples = 32;
+    constexpr float kLogThreshold = 0.05f;
+
+    if (!std::isfinite(raw_scale) || raw_scale <= 0.0f) {
+        return rgbd_alignment_scale_initialized_ ? rgbd_alignment_scale_ : 1.0f;
+    }
+
+    if (num_supporting_samples < kMinReliableSamples) {
+        return rgbd_alignment_scale_initialized_ ? rgbd_alignment_scale_ : raw_scale;
+    }
+
+    rgbd_alignment_scale_history_.push_back(raw_scale);
+    rgbd_alignment_scale_ = medianOfVector(rgbd_alignment_scale_history_);
+    rgbd_alignment_scale_initialized_ = true;
+
+    if (std::abs(raw_scale - rgbd_alignment_scale_) > kLogThreshold) {
+        std::cout << "[Gaussian Mapper]Keyframe " << frame_id
+                  << " smoothed RGB-D depth scale from raw " << raw_scale
+                  << " to sequence " << rgbd_alignment_scale_
+                  << " using " << rgbd_alignment_scale_history_.size()
+                  << " keyframes." << std::endl;
+    }
+
+    return rgbd_alignment_scale_;
+}
+
 void GaussianMapper::readConfigFromFile(std::filesystem::path cfg_path)
 {
     const auto settings_file = loadScalarMap(cfg_path);
@@ -695,6 +961,12 @@ void GaussianMapper::readConfigFromFile(std::filesystem::path cfg_path)
     use_imported_seed_geometry_ = getOptionalValue<int>(settings_file, "Mapper.use_imported_seed_geometry", 0) != 0;
     seed_only_active_points_ = getOptionalValue<int>(settings_file, "Mapper.seed_only_active_points", 1) != 0;
     seed_isotropic_scale_ = getOptionalValue<float>(settings_file, "Mapper.seed_isotropic_scale", 0.01f);
+    enable_geometry_pruning_ = getOptionalValue<int>(settings_file, "Mapper.enable_geometry_pruning", 0) != 0;
+    geometry_prune_start_iter_ = getOptionalValue<int>(settings_file, "Mapper.geometry_prune_start_iter", opt_params_.densify_from_iter_);
+    geometry_prune_interval_ = getOptionalValue<int>(settings_file, "Mapper.geometry_prune_interval", opt_params_.densification_interval_);
+    geometry_prune_max_scale_fraction_ = getOptionalValue<float>(settings_file, "Mapper.geometry_prune_max_scale_fraction", 0.02f);
+    geometry_prune_max_anisotropy_ratio_ = getOptionalValue<float>(settings_file, "Mapper.geometry_prune_max_anisotropy_ratio", 4.0f);
+    geometry_prune_max_center_dist_factor_ = getOptionalValue<float>(settings_file, "Mapper.geometry_prune_max_center_dist_factor", 3.0f);
     enable_depth_evidence_pruning_ = getOptionalValue<int>(settings_file, "Mapper.enable_depth_evidence_pruning", 0) != 0;
     depth_evidence_prune_start_iter_ = getOptionalValue<int>(settings_file, "Mapper.depth_evidence_prune_start_iter", 1000);
     depth_evidence_prune_interval_ = getOptionalValue<int>(settings_file, "Mapper.depth_evidence_prune_interval", opt_params_.densification_interval_);
@@ -710,15 +982,19 @@ void GaussianMapper::readConfigFromFile(std::filesystem::path cfg_path)
     if (sensor_type_it != settings_file.end()) {
         sensor_type_ = parseSensorType(sensor_type_it->second);
     }
+
+    depth_scale = getOptionalValue<float>(settings_file, "SLAM.depth_scale", 1000.0f);
 }
 
 void GaussianMapper::run()
 {
     std::cout << "!!! GaussianMapper::run" << std::endl;
+    std::cout << "[DEBUG] sensor_type_=" << sensor_type_ << " (RGBD=" << RGBD << ")" << std::endl;
     // First loop: Initial gaussian mapping
     while (!isStopped()) {
         // Check conditions for initial mapping
         if (hasMetInitialMappingConditions()) {
+            std::cout << "[DEBUG] hasMetInitialMappingConditions=true" << std::endl;
             // Get initial map
             std::vector<float> new_points;
             std::vector<float> new_colors;
@@ -768,16 +1044,6 @@ void GaussianMapper::run()
                     //     ++j;
                     // }
 
-                    appendSeedGeometry(
-                        fh,
-                        use_imported_seed_geometry_,
-                        seed_only_active_points_,
-                        seed_isotropic_scale_,
-                        new_points,
-                        new_colors,
-                        new_scales,
-                        new_rots);
-
                     std::shared_ptr<GaussianKeyframe> new_kf = std::make_shared<GaussianKeyframe>(fh->incomingID, getIteration());
                     // std::shared_ptr<GaussianKeyframe> new_kf = std::make_shared<GaussianKeyframe>(scene_->keyframes().size(), getIteration());
                     new_kf->zfar_ = z_far_;
@@ -797,28 +1063,86 @@ void GaussianMapper::run()
                         Camera& camera = scene_->cameras_.at(0);
                         new_kf->setCameraParams(camera);
 
-                        // Image (left if STEREO)
-                        dso::MinimalImageB3* img = fh->kfImg;
-                        cv::Mat imgRGB(img->h, img->w, CV_8UC3, img->data);
-                        if (need_distortion) {
-                            camera.undistortImage(imgRGB, imgRGB_undistorted);
-                        } else {
-                            imgRGB_undistorted = imgRGB;
+                        if (sensor_type_ == RGBD) {
+                            float raw_alignment_scale = 1.0f;
+                            int num_alignment_samples = 0;
+                            imgAux_undistorted = prepareAlignedRgbdDepthImage(
+                                fh->kfDepth,
+                                fh->kfSparseDepth,
+                                camera,
+                                need_distortion,
+                                depth_scale,
+                                cv::Size(image_width, image_height),
+                                fh->incomingID,
+                                RGBD_min_depth_,
+                                RGBD_max_depth_,
+                                &raw_alignment_scale,
+                                &num_alignment_samples,
+                                false);
+                            const float smoothed_alignment_scale = stabilizeRgbdAlignmentScale(
+                                raw_alignment_scale,
+                                num_alignment_samples,
+                                fh->incomingID);
+                            if (smoothed_alignment_scale != 1.0f) {
+                                imgAux_undistorted *= smoothed_alignment_scale;
+                            }
                         }
-                        // imgRGB_undistorted = imgRGB;
 
-                        imgAux_undistorted = imgRGB_undistorted;
-                        imgRGB_undistorted.convertTo(imgRGB_undistorted, CV_32FC3, 1.0 / 255.0);
+                        appendSeedGeometry(
+                            fh,
+                            use_imported_seed_geometry_,
+                            seed_only_active_points_,
+                            seed_isotropic_scale_,
+                            sensor_type_,
+                            imgAux_undistorted,
+                            fx,
+                            fy,
+                            cx,
+                            cy,
+                            RGBD_min_depth_,
+                            RGBD_max_depth_,
+                            new_points,
+                            new_colors,
+                            new_scales,
+                            new_rots);
+
+                        imgRGB_undistorted = prepareUndistortedRgbImage(
+                            fh->kfImg,
+                            camera,
+                            need_distortion);
                         new_kf->original_image_ =
                             tensor_utils::cvMat2TorchTensor_Float32(imgRGB_undistorted, device_type_);
-                        
-                        // Depth image
-                        // dso::MinimalImage<unsigned short>* depth_img = fh->kf_depth;
-                        // cv::Mat imgDepth(depth_img->h, depth_img->w, CV_16UC1, depth_img->data);
-                        // cv::Mat imgDepthFloat;
-                        // imgDepth.convertTo(imgDepthFloat, CV_32FC1, 1.0 / depth_scale);
-                        // new_kf->original_depth_ =
-                        //     tensor_utils::cvMat2TorchTensor_Float32(imgDepthFloat, device_type_);
+
+                        if (sensor_type_ == RGBD) {
+                            if (imgAux_undistorted.empty()) {
+                                float raw_alignment_scale = 1.0f;
+                                int num_alignment_samples = 0;
+                                imgAux_undistorted = prepareAlignedRgbdDepthImage(
+                                    fh->kfDepth,
+                                    fh->kfSparseDepth,
+                                    camera,
+                                    need_distortion,
+                                    depth_scale,
+                                    imgRGB_undistorted.size(),
+                                    fh->incomingID,
+                                    RGBD_min_depth_,
+                                    RGBD_max_depth_,
+                                    &raw_alignment_scale,
+                                    &num_alignment_samples,
+                                    false);
+                                const float smoothed_alignment_scale = stabilizeRgbdAlignmentScale(
+                                    raw_alignment_scale,
+                                    num_alignment_samples,
+                                    fh->incomingID);
+                                if (smoothed_alignment_scale != 1.0f) {
+                                    imgAux_undistorted *= smoothed_alignment_scale;
+                                }
+                            }
+                            new_kf->original_depth_ =
+                                tensor_utils::cvMat2TorchTensor_Float32(imgAux_undistorted, device_type_);
+                        } else {
+                            imgAux_undistorted = imgRGB_undistorted;
+                        }
 
                         // Sparse Depth
                         new_kf->sparse_depth_ =
@@ -1214,6 +1538,13 @@ void GaussianMapper::trainForOneIteration()
                 max_gaussian_scale_fraction_);
         }
 
+        if (enable_geometry_pruning_ &&
+            getIteration() >= geometry_prune_start_iter_ &&
+            geometry_prune_interval_ > 0 &&
+            (getIteration() % geometry_prune_interval_ == 0)) {
+            pruneGeometryOutliers();
+        }
+
         auto iter_end_timing = std::chrono::steady_clock::now();
         auto iter_time = std::chrono::duration_cast<std::chrono::milliseconds>(
                         iter_end_timing - iter_start_timing).count();
@@ -1363,16 +1694,6 @@ void GaussianMapper::combineMappingOperations()
             //     ++j;
             // }
 
-            appendSeedGeometry(
-                fh,
-                use_imported_seed_geometry_,
-                seed_only_active_points_,
-                seed_isotropic_scale_,
-                new_points,
-                new_colors,
-                new_scales,
-                new_rots);
-
             // std::cout << "Num_points " << new_points.size()/3 << " Points" << std::endl;
 
             std::shared_ptr<GaussianKeyframe> new_kf = std::make_shared<GaussianKeyframe>(fh->incomingID, getIteration());
@@ -1387,36 +1708,92 @@ void GaussianMapper::combineMappingOperations()
                 // pose.translation().cast<double>()
                 c2w.unit_quaternion(),
                 c2w.translation());
-            cv::Mat imgRGB_undistorted, imgAux_undistorted;
-            try {
-                // Add first keyframe to the scene
-                Camera& camera = scene_->cameras_.at(0);
-                new_kf->setCameraParams(camera);
+                    cv::Mat imgRGB_undistorted, imgAux_undistorted;
+                    try {
+                        // Add first keyframe to the scene
+                        Camera& camera = scene_->cameras_.at(0);
+                        new_kf->setCameraParams(camera);
 
-                // Image (left if STEREO)
-                dso::MinimalImageB3* img = fh->kfImg;
-                cv::Mat imgRGB(img->h, img->w, CV_8UC3, img->data);
+                        if (sensor_type_ == RGBD) {
+                            float raw_alignment_scale = 1.0f;
+                            int num_alignment_samples = 0;
+                            imgAux_undistorted = prepareAlignedRgbdDepthImage(
+                                fh->kfDepth,
+                                fh->kfSparseDepth,
+                                camera,
+                                need_distortion,
+                                depth_scale,
+                                cv::Size(image_width, image_height),
+                                fh->incomingID,
+                                RGBD_min_depth_,
+                                RGBD_max_depth_,
+                                &raw_alignment_scale,
+                                &num_alignment_samples,
+                                false);
+                            const float smoothed_alignment_scale = stabilizeRgbdAlignmentScale(
+                                raw_alignment_scale,
+                                num_alignment_samples,
+                                fh->incomingID);
+                            if (smoothed_alignment_scale != 1.0f) {
+                                imgAux_undistorted *= smoothed_alignment_scale;
+                            }
+                        }
 
-                if (need_distortion) {
-                    camera.undistortImage(imgRGB, imgRGB_undistorted);
-                } else {
-                    imgRGB_undistorted = imgRGB;
-                }
-                // camera.undistortImage(imgRGB, imgRGB_undistorted);
-                // imgRGB_undistorted = imgRGB;
+                        appendSeedGeometry(
+                            fh,
+                            use_imported_seed_geometry_,
+                            seed_only_active_points_,
+                            seed_isotropic_scale_,
+                            sensor_type_,
+                            imgAux_undistorted,
+                            fx,
+                            fy,
+                            cx,
+                            cy,
+                            RGBD_min_depth_,
+                            RGBD_max_depth_,
+                            new_points,
+                            new_colors,
+                            new_scales,
+                            new_rots);
 
-                imgAux_undistorted = imgRGB_undistorted;
-                imgRGB_undistorted.convertTo(imgRGB_undistorted, CV_32FC3, 1.0 / 255.0);
+                        imgRGB_undistorted = prepareUndistortedRgbImage(
+                            fh->kfImg,
+                            camera,
+                    need_distortion);
                 new_kf->original_image_ =
                     tensor_utils::cvMat2TorchTensor_Float32(imgRGB_undistorted, device_type_);
 
-                // Depth image
-                // dso::MinimalImage<unsigned short>* depth_img = fh->kf_depth;
-                // cv::Mat imgDepth(depth_img->h, depth_img->w, CV_16UC1, depth_img->data);
-                // cv::Mat imgDepthFloat;
-                // imgDepth.convertTo(imgDepthFloat, CV_32FC1, 1.0 / depth_scale);
-                // new_kf->original_depth_ =
-                //     tensor_utils::cvMat2TorchTensor_Float32(imgDepthFloat, device_type_);
+                        if (sensor_type_ == RGBD) {
+                            if (imgAux_undistorted.empty()) {
+                                float raw_alignment_scale = 1.0f;
+                                int num_alignment_samples = 0;
+                                imgAux_undistorted = prepareAlignedRgbdDepthImage(
+                                    fh->kfDepth,
+                                    fh->kfSparseDepth,
+                                    camera,
+                                    need_distortion,
+                                    depth_scale,
+                                    imgRGB_undistorted.size(),
+                                    fh->incomingID,
+                                    RGBD_min_depth_,
+                                    RGBD_max_depth_,
+                                    &raw_alignment_scale,
+                                    &num_alignment_samples,
+                                    false);
+                                const float smoothed_alignment_scale = stabilizeRgbdAlignmentScale(
+                                    raw_alignment_scale,
+                                    num_alignment_samples,
+                                    fh->incomingID);
+                                if (smoothed_alignment_scale != 1.0f) {
+                                    imgAux_undistorted *= smoothed_alignment_scale;
+                                }
+                            }
+                            new_kf->original_depth_ =
+                                tensor_utils::cvMat2TorchTensor_Float32(imgAux_undistorted, device_type_);
+                        } else {
+                    imgAux_undistorted = imgRGB_undistorted;
+                }
 
                 // Sparse Depth
                 new_kf->sparse_depth_ =
@@ -1538,10 +1915,40 @@ void GaussianMapper::handleNewKeyframe(
             
         // Auxiliary Image
         cv::Mat imgAux = std::get<5>(kf);
-        if (this->sensor_type_ == RGBD)
-            camera.undistortImage(imgAux, imgAux_undistorted);
-        else
+        if (this->sensor_type_ == RGBD) {
+            if (imgAux.empty()) {
+                imgAux_undistorted = cv::Mat::zeros(imgRGB_undistorted.rows, imgRGB_undistorted.cols, CV_32FC1);
+            } else {
+                if (imgAux.type() == CV_16UC1) {
+                    if (need_distortion) {
+                        camera.undistortImage(
+                            imgAux,
+                            imgAux_undistorted,
+                            cv::InterpolationFlags::INTER_NEAREST);
+                    } else {
+                        imgAux_undistorted = imgAux;
+                    }
+                    imgAux_undistorted.convertTo(imgAux_undistorted, CV_32FC1, 1.0 / depth_scale);
+                } else if (imgAux.type() == CV_32FC1) {
+                    if (need_distortion) {
+                        camera.undistortImage(
+                            imgAux,
+                            imgAux_undistorted,
+                            cv::InterpolationFlags::INTER_NEAREST);
+                    } else {
+                        imgAux_undistorted = imgAux;
+                    }
+                } else {
+                    throw std::runtime_error("[Gaussian Mapper]RGB-D auxiliary image must be CV_16UC1 or CV_32FC1.");
+                }
+            }
+            pkf->original_depth_ =
+                tensor_utils::cvMat2TorchTensor_Float32(imgAux_undistorted, device_type_);
+        } else {
             imgAux_undistorted = imgAux;
+        }
+
+        imgRGB_undistorted.convertTo(imgRGB_undistorted, CV_32FC3, 1.0 / 255.0);
 
         pkf->original_image_ =
             tensor_utils::cvMat2TorchTensor_Float32(imgRGB_undistorted, device_type_);
@@ -1928,7 +2335,19 @@ void GaussianMapper::increasePcdByKeyframeInactiveGeoDensify(
 // savePly(result_dir_ / (std::to_string(getIteration()) + "_" + std::to_string(pkf->fid_) + "_0_before_inactive_geo_densify"));
         cv::cuda::GpuMat img_rgb_gpu, img_depth_gpu;
         img_rgb_gpu.upload(pkf->img_undist_);
-        img_depth_gpu.upload(pkf->img_auxiliary_undist_);
+        cv::Mat depth_float = pkf->img_auxiliary_undist_;
+        if (depth_float.empty()) {
+            std::cerr << "[Gaussian Mapper]RGB-D keyframe " << pkf->fid_
+                      << " is missing auxiliary depth. Skipping inactive geo densify." << std::endl;
+            pkf->done_inactive_geo_densify_ = true;
+            return;
+        }
+        if (depth_float.type() == CV_16UC1) {
+            depth_float.convertTo(depth_float, CV_32FC1, 1.0 / depth_scale);
+        } else if (depth_float.type() != CV_32FC1) {
+            throw std::runtime_error("[Gaussian Mapper]RGB-D auxiliary image must be CV_16UC1 or CV_32FC1.");
+        }
+        img_depth_gpu.upload(depth_float);
 
         // From cv::cuda::GpuMat to torch::Tensor
         torch::Tensor rgb = tensor_utils::cvGpuMat2TorchTensor_Float32(img_rgb_gpu);
@@ -2512,10 +2931,10 @@ void GaussianMapper::renderThirdPersonViews(std::string name_suffix)
         return;
     }
 
-    Eigen::Vector3d scene_center = estimateSceneCenter(gaussians_, *scene_);
     auto [translate, radius] = scene_->getNerfppNorm();
-    double scene_radius = std::max(static_cast<double>(radius), 0.1);
-    double camera_distance = std::max(scene_radius * 1.6, 0.35);
+    Eigen::Vector3d scene_center = -translate.cast<double>();
+    double scene_radius = std::max(static_cast<double>(radius), 0.25);
+    double camera_distance = std::max(scene_radius * 1.3, 0.45);
 
     std::filesystem::path result_dir = result_dir_ / (std::to_string(getIteration()) + name_suffix) / "third_person";
     CHECK_DIRECTORY_AND_CREATE_IF_NOT_EXISTS(result_dir)
@@ -2529,11 +2948,16 @@ void GaussianMapper::renderThirdPersonViews(std::string name_suffix)
 
     for (const auto& [view_name, direction] : viewpoints) {
         Eigen::Vector3d eye = scene_center + camera_distance * direction.normalized();
-        Sophus::SE3d c2w = makeLookAtPoseC2W(eye, scene_center);
-        cv::Mat rendered = renderFromPose(c2w.inverse().cast<float>(), image_width, image_height, true);
-        cv::Mat rendered_u8;
-        rendered.convertTo(rendered_u8, CV_8UC3, 255.0);
-        writePngImage(rendered_u8, result_dir / (view_name + ".png"));
+        try {
+            Sophus::SE3d c2w = makeLookAtPoseC2W(eye, scene_center);
+            cv::Mat rendered = renderFromPose(c2w.cast<float>(), image_width, image_height, true);
+            cv::Mat rendered_u8;
+            rendered.convertTo(rendered_u8, CV_8UC3, 255.0);
+            writePngImage(rendered_u8, result_dir / (view_name + ".png"));
+        } catch (const std::exception& e) {
+            std::cerr << "[Gaussian Mapper]Skipping third-person view " << view_name
+                      << " due to render failure: " << e.what() << std::endl;
+        }
     }
 }
 
@@ -2571,22 +2995,37 @@ void GaussianMapper::renderContextPoseViews(std::string name_suffix)
         auto kfit = keyframes.begin();
         std::advance(kfit, static_cast<long>(index));
         const auto& pkf = kfit->second;
-        Sophus::SE3d pulled_back_Tcw = pullBackPoseAlongViewingDirection(pkf->getPosef(), pullback_m);
-        Eigen::Vector3d eye = pulled_back_Tcw.inverse().translation();
-        Sophus::SE3d overview_c2w = makeLookAtPoseC2W(eye, scene_center);
-        cv::Mat rendered = renderFromPose(overview_c2w.inverse().cast<float>(), image_width, image_height, true);
-        cv::Mat rendered_u8;
-        rendered.convertTo(rendered_u8, CV_8UC3, 255.0);
-        const std::string file_name = sample_indices[ordinal].first + "_pullback_1p5m.png";
-        writePngImage(rendered_u8, result_dir / file_name);
-        std::cout << "[Gaussian Mapper]Saved context pose render: " << file_name << std::endl;
+        try {
+            Sophus::SE3d pulled_back_Tcw = pullBackPoseAlongViewingDirection(pkf->getPosef(), pullback_m);
+            Eigen::Vector3d eye = pulled_back_Tcw.translation();
+            Sophus::SE3d overview_c2w = makeLookAtPoseC2W(eye, scene_center);
+            cv::Mat rendered = renderFromPose(overview_c2w.cast<float>(), image_width, image_height, true);
+            cv::Mat rendered_u8;
+            rendered.convertTo(rendered_u8, CV_8UC3, 255.0);
+            const std::string file_name = sample_indices[ordinal].first + "_pullback_1p5m.png";
+            writePngImage(rendered_u8, result_dir / file_name);
+            std::cout << "[Gaussian Mapper]Saved context pose render: " << file_name << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "[Gaussian Mapper]Skipping context pose render "
+                      << sample_indices[ordinal].first << " due to render failure: "
+                      << e.what() << std::endl;
+        }
         ++ordinal;
     }
 }
 
 void GaussianMapper::recordDepthEvidenceFromView(std::shared_ptr<GaussianKeyframe> viewpoint_cam)
 {
-    if (device_type_ != torch::kCUDA || !viewpoint_cam || viewpoint_cam->sparse_depth_.numel() == 0) {
+    if (device_type_ != torch::kCUDA || !viewpoint_cam) {
+        return;
+    }
+
+    torch::Tensor depth_map;
+    if (sensor_type_ == RGBD && viewpoint_cam->original_depth_.numel() != 0) {
+        depth_map = viewpoint_cam->original_depth_.to(device_type_);
+    } else if (viewpoint_cam->sparse_depth_.numel() != 0) {
+        depth_map = viewpoint_cam->sparse_depth_.to(device_type_);
+    } else {
         return;
     }
 
@@ -2643,11 +3082,17 @@ void GaussianMapper::recordDepthEvidenceFromView(std::shared_ptr<GaussianKeyfram
     auto z_valid = z.index({valid});
     auto u_valid = u.index({valid});
     auto v_valid = v.index({valid});
-    auto sparse_depth = viewpoint_cam->sparse_depth_.to(device_type_);
-    auto sparse_flat = sparse_depth.flatten();
+    auto depth_flat = depth_map.flatten();
     auto sample_idx = v_valid * width + u_valid;
-    auto sampled_depth = sparse_flat.index({sample_idx});
+    auto sampled_depth = depth_flat.index({sample_idx});
     auto has_depth = sampled_depth > 0.0f;
+    if (sensor_type_ == RGBD) {
+        has_depth = torch::logical_and(
+            has_depth,
+            torch::logical_and(
+                sampled_depth >= RGBD_min_depth_,
+                sampled_depth <= RGBD_max_depth_));
+    }
     if (!has_depth.any().item<bool>()) {
         return;
     }
@@ -2672,6 +3117,45 @@ void GaussianMapper::recordDepthEvidenceFromView(std::shared_ptr<GaussianKeyfram
     }
 
     gaussians_->recordDepthEvidence(support_mask, free_space_mask);
+}
+
+void GaussianMapper::pruneGeometryOutliers()
+{
+    if (!gaussians_ || gaussians_->getXYZ().numel() == 0) {
+        return;
+    }
+
+    torch::NoGradGuard no_grad;
+    auto [translate, radius] = scene_->getNerfppNorm();
+    const float scene_extent = std::max(static_cast<float>(radius), 1e-3f);
+    const Eigen::Vector3f scene_center = -translate;
+
+    auto xyz = gaussians_->getXYZ();
+    auto scales = gaussians_->getScalingActivation();
+    auto min_scales = std::get<0>(scales.min(/*dim=*/1));
+    auto max_scales = std::get<0>(scales.max(/*dim=*/1));
+    auto anisotropy = max_scales / torch::clamp_min(min_scales, 1e-6f);
+
+    auto center_tensor = torch::tensor(
+        {scene_center.x(), scene_center.y(), scene_center.z()},
+        torch::TensorOptions().dtype(torch::kFloat32).device(device_type_));
+    auto distances = torch::norm(xyz - center_tensor.unsqueeze(0), /*p=*/2, /*dim=*/1);
+    auto finite_mask = torch::isfinite(xyz).all(1);
+
+    auto prune_mask = torch::logical_not(finite_mask);
+    prune_mask = torch::logical_or(
+        prune_mask,
+        anisotropy > geometry_prune_max_anisotropy_ratio_);
+    prune_mask = torch::logical_or(
+        prune_mask,
+        max_scales > (geometry_prune_max_scale_fraction_ * scene_extent));
+    prune_mask = torch::logical_or(
+        prune_mask,
+        distances > (geometry_prune_max_center_dist_factor_ * scene_extent));
+
+    if (prune_mask.any().item<bool>()) {
+        gaussians_->prunePoints(prune_mask);
+    }
 }
 
 void GaussianMapper::savePly(std::filesystem::path result_dir)

@@ -177,6 +177,9 @@ FullSystem::FullSystem()
 	maxIdJetVisDebug = -1;
 	minIdJetVisTracker = -1;
 	maxIdJetVisTracker = -1;
+
+	rgbdSmoothedScaleRatio = 1.0f;
+	rgbdScaleCorrectionCount = 0;
 }
 
 FullSystem::~FullSystem()
@@ -462,6 +465,29 @@ Vec4 FullSystem::trackNewCoarse(FrameHessian* fh)
 
 
 	return Vec4(achievedRes[0], flowVecs[0], flowVecs[1], flowVecs[2]);
+}
+
+
+void FullSystem::applyRGBDScaleCorrection(FrameHessian* fh)
+{
+	if(setting_rgbdTrackingMode <= 0) return;
+
+	float medianRatio = coarseTracker->computeRGBDScaleRatio();
+	if(medianRatio < 0.3f || medianRatio > 3.0f) return;
+
+	const float smoothingAlpha = 0.05f;
+	rgbdSmoothedScaleRatio = (1.0f - smoothingAlpha) * rgbdSmoothedScaleRatio + smoothingAlpha * medianRatio;
+	rgbdScaleCorrectionCount++;
+
+	if(rgbdScaleCorrectionCount <= 5 || rgbdScaleCorrectionCount % 50 == 0)
+		printf("[RGB-D Scale] frame %d: raw=%.3f smoothed=%.3f cnt=%d\n",
+			   fh->shell->id, medianRatio, rgbdSmoothedScaleRatio, rgbdScaleCorrectionCount);
+
+	if(rgbdSmoothedScaleRatio < 0.3f || rgbdSmoothedScaleRatio > 3.0f) return;
+
+	SE3& pose = fh->shell->camToWorld;
+	Vec3 correctedTranslation = pose.translation() / rgbdSmoothedScaleRatio;
+	pose = SE3(pose.so3(), correctedTranslation);
 }
 
 
@@ -931,6 +957,8 @@ void FullSystem::addActiveFrame( ImageAndExposure* image, MinimalImageB3* gt_img
 			isLost=true;
             return;
         }
+
+		applyRGBDScaleCorrection(fh);
 
 		bool needToMakeKF = false;
 		if(setting_keyframesPerSecond > 0)

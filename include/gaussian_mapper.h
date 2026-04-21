@@ -238,6 +238,11 @@ protected:
         std::string name_suffix = "");
     void recordDepthEvidenceFromView(
         std::shared_ptr<GaussianKeyframe> viewpoint_cam);
+    float stabilizeRgbdAlignmentScale(
+        float raw_scale,
+        int num_supporting_samples,
+        std::size_t frame_id);
+    void pruneGeometryOutliers();
 
     void savePly(std::filesystem::path result_dir);
     void keyframesToJson(std::filesystem::path result_dir);
@@ -363,6 +368,12 @@ protected:
     bool use_imported_seed_geometry_ = false;
     bool seed_only_active_points_ = true;
     float seed_isotropic_scale_ = 0.01f;
+    bool enable_geometry_pruning_ = false;
+    int geometry_prune_start_iter_ = 0;
+    int geometry_prune_interval_ = 100;
+    float geometry_prune_max_scale_fraction_ = 0.02f;
+    float geometry_prune_max_anisotropy_ratio_ = 4.0f;
+    float geometry_prune_max_center_dist_factor_ = 3.0f;
     bool enable_depth_evidence_pruning_ = false;
     int depth_evidence_prune_start_iter_ = 1000;
     int depth_evidence_prune_interval_ = 100;
@@ -373,6 +384,9 @@ protected:
     float depth_evidence_free_space_margin_ = 0.03f;
     float max_gaussian_anisotropy_ratio_ = 4.0f;
     float max_gaussian_scale_fraction_ = 0.03f;
+    bool rgbd_alignment_scale_initialized_ = false;
+    float rgbd_alignment_scale_ = 1.0f;
+    std::vector<float> rgbd_alignment_scale_history_;
 
     int prune_big_point_after_iter_;
     float densify_min_opacity_ = 20;

@@ -96,13 +96,19 @@ public:
 	Vec5 lastResiduals;
 	Vec3 lastFlowIndicators;
 	double firstCoarseRMSE;
+
+	float computeRGBDScaleRatio();
 private:
 
 
 	void makeCoarseDepthL0(std::vector<FrameHessian*> frameHessians);
+	void makeCoarseRGBDDepthL0();
 	float* idepth[PYR_LEVELS];
 	float* weightSums[PYR_LEVELS];
 	float* weightSums_bak[PYR_LEVELS];
+
+	float* rgbd_idepth[PYR_LEVELS];
+	float* rgbd_weightSums[PYR_LEVELS];
 
 
 	Vec6 calcResAndGS(int lvl, Mat88 &H_out, Vec8 &b_out, const SE3 &refToNew, AffLight aff_g2l, float cutoffTH);

@@ -68,6 +68,9 @@ CoarseTracker::CoarseTracker(int ww, int hh) : lastRef_aff_g2l(0,0)
         weightSums[lvl] = allocAligned<4,float>(wl*hl, ptrToDelete);
         weightSums_bak[lvl] = allocAligned<4,float>(wl*hl, ptrToDelete);
 
+        rgbd_idepth[lvl] = allocAligned<4,float>(wl*hl, ptrToDelete);
+        rgbd_weightSums[lvl] = allocAligned<4,float>(wl*hl, ptrToDelete);
+
         pc_u[lvl] = allocAligned<4,float>(wl*hl, ptrToDelete);
         pc_v[lvl] = allocAligned<4,float>(wl*hl, ptrToDelete);
         pc_idepth[lvl] = allocAligned<4,float>(wl*hl, ptrToDelete);
@@ -243,10 +246,15 @@ void CoarseTracker::makeCoarseDepthL0(std::vector<FrameHessian*> frameHessians)
 
 
 	// normalize idepths and weights.
+	// Prefer RGB-D idepth where available (metric scale), fall back to DSO idepth.
+	static int normDebugCount = 0;
+	int rgbdCount = 0, dsoCount = 0;
 	for(int lvl=0; lvl<pyrLevelsUsed; lvl++)
 	{
 		float* weightSumsl = weightSums[lvl];
 		float* idepthl = idepth[lvl];
+		float* rgbd_idepthl = rgbd_idepth[lvl];
+		float* rgbd_weightSumsl = rgbd_weightSums[lvl];
 		Eigen::Vector3f* dIRefl = lastRef->dIp[lvl];
 
 		int wl = w[lvl], hl = h[lvl];
@@ -263,20 +271,31 @@ void CoarseTracker::makeCoarseDepthL0(std::vector<FrameHessian*> frameHessians)
 			{
 				int i = x+y*wl;
 
-				if(weightSumsl[i] > 0)
+				// Prefer RGB-D idepth where available; otherwise use DSO idepth.
+				float used_idepth = -1;
+				if(rgbd_weightSumsl[i] > 0)
 				{
-					idepthl[i] /= weightSumsl[i];
+					used_idepth = rgbd_idepthl[i] / rgbd_weightSumsl[i];
+					rgbdCount++;
+				}
+				else if(weightSumsl[i] > 0)
+				{
+					used_idepth = idepthl[i] / weightSumsl[i];
+					dsoCount++;
+				}
+
+				if(used_idepth > 0)
+				{
+					idepthl[i] = used_idepth;
 					lpc_u[lpc_n] = x;
 					lpc_v[lpc_n] = y;
-					lpc_idepth[lpc_n] = idepthl[i];
+					lpc_idepth[lpc_n] = used_idepth;
 					lpc_color[lpc_n] = dIRefl[i][0];
 
-
-
-					if(!std::isfinite(lpc_color[lpc_n]) || !(idepthl[i]>0))
+					if(!std::isfinite(lpc_color[lpc_n]) || !(used_idepth>0))
 					{
 						idepthl[i] = -1;
-						continue;	// just skip if something is wrong.
+						continue;
 					}
 					lpc_n++;
 				}
@@ -289,6 +308,79 @@ void CoarseTracker::makeCoarseDepthL0(std::vector<FrameHessian*> frameHessians)
 		pc_n[lvl] = lpc_n;
 	}
 
+	if(normDebugCount++ < 5)
+		printf("[RGB-D] Norm lvl0: rgbd=%d dso=%d total=%d\n", rgbdCount, dsoCount, rgbdCount+dsoCount);
+
+}
+
+
+void CoarseTracker::makeCoarseRGBDDepthL0()
+{
+	if(lastRef == nullptr || lastRef->kf_depth == nullptr)
+	{
+		static int warnCount = 0;
+		if(warnCount++ < 5)
+			printf("[RGB-D] WARNING: lastRef->kf_depth is null! Skipping RGB-D depth pyramid.\n");
+		for(int lvl=0; lvl<pyrLevelsUsed; lvl++)
+		{
+			memset(rgbd_idepth[lvl], 0, sizeof(float)*w[lvl]*h[lvl]);
+			memset(rgbd_weightSums[lvl], 0, sizeof(float)*w[lvl]*h[lvl]);
+		}
+		return;
+	}
+
+	static int debugCount = 0;
+	if(debugCount++ < 3)
+		printf("[RGB-D] Building depth pyramid from raw depth %dx%d, scale=%.0f\n",
+			   lastRef->kf_depth->w, lastRef->kf_depth->h, setting_rgbdDepthScale);
+
+	int ww = w[0], hh = h[0];
+	MinimalImage<unsigned short>* rawDepth = lastRef->kf_depth;
+	float depthScale = setting_rgbdDepthScale;
+
+	memset(rgbd_idepth[0], 0, sizeof(float)*ww*hh);
+	memset(rgbd_weightSums[0], 0, sizeof(float)*ww*hh);
+
+	for(int y=0; y<rawDepth->h && y<hh; y++)
+	{
+		for(int x=0; x<rawDepth->w && x<ww; x++)
+		{
+			unsigned short rawVal = rawDepth->at(x, y);
+			if(rawVal > 0)
+			{
+				float metricDepth = static_cast<float>(rawVal) / depthScale;
+				if(metricDepth > 0.01f && metricDepth < 100.0f)
+				{
+					rgbd_idepth[0][x + ww*y] = 1.0f / metricDepth;
+					rgbd_weightSums[0][x + ww*y] = 1.0f;
+				}
+			}
+		}
+	}
+
+	for(int lvl=1; lvl<pyrLevelsUsed; lvl++)
+	{
+		int lvlm1 = lvl-1;
+		int wl = w[lvl], hl = h[lvl], wlm1 = w[lvlm1];
+
+		float* rgbd_idepth_l = rgbd_idepth[lvl];
+		float* rgbd_weightSums_l = rgbd_weightSums[lvl];
+
+		float* rgbd_idepth_lm = rgbd_idepth[lvlm1];
+		float* rgbd_weightSums_lm = rgbd_weightSums[lvlm1];
+
+		for(int y=0; y<hl; y++)
+			for(int x=0; x<wl; x++)
+			{
+				int bidx = 2*x + 2*y*wlm1;
+				float sumIdepth = rgbd_idepth_lm[bidx] + rgbd_idepth_lm[bidx+1] +
+								  rgbd_idepth_lm[bidx+wlm1] + rgbd_idepth_lm[bidx+wlm1+1];
+				float sumWeight = rgbd_weightSums_lm[bidx] + rgbd_weightSums_lm[bidx+1] +
+								  rgbd_weightSums_lm[bidx+wlm1] + rgbd_weightSums_lm[bidx+wlm1+1];
+				rgbd_idepth_l[x + y*wl] = sumIdepth;
+				rgbd_weightSums_l[x + y*wl] = sumWeight;
+			}
+	}
 }
 
 
@@ -661,6 +753,11 @@ void CoarseTracker::setCoarseTrackingRef(
 {
 	assert(frameHessians.size()>0);
 	lastRef = frameHessians.back();
+
+	// Build RGB-D depth pyramid FIRST (before normalization in makeCoarseDepthL0)
+	if(setting_rgbdTrackingMode > 0)
+		makeCoarseRGBDDepthL0();
+
 	makeCoarseDepthL0(frameHessians);
 
 
@@ -672,6 +769,47 @@ void CoarseTracker::setCoarseTrackingRef(
 
 }
 
+float CoarseTracker::computeRGBDScaleRatio()
+{
+	if(lastRef == nullptr || lastRef->kf_depth == nullptr) return 1.0f;
+
+	int ww = w[0], hh = h[0];
+	MinimalImage<unsigned short>* rawDepth = lastRef->kf_depth;
+	float depthScale = setting_rgbdDepthScale;
+
+	std::vector<float> ratios;
+	ratios.reserve(ww * hh / 4);
+
+	for(int y = 2; y < hh - 2; y += 2)
+	{
+		for(int x = 2; x < ww - 2; x += 2)
+		{
+			int idx = x + y * ww;
+			float dsoWeight = weightSums[0][idx];
+			if(dsoWeight <= 0) continue;
+
+			float dso_idepth = idepth[0][idx] / dsoWeight;
+			if(dso_idepth <= 0.01f || dso_idepth > 10.0f) continue;
+
+			unsigned short rawVal = rawDepth->at(x, y);
+			if(rawVal == 0) continue;
+
+			float metricDepth = static_cast<float>(rawVal) / depthScale;
+			if(metricDepth < 0.1f || metricDepth > 50.0f) continue;
+
+			float rgbd_idepth = 1.0f / metricDepth;
+			float ratio = dso_idepth / rgbd_idepth;
+
+			if(ratio > 0.2f && ratio < 5.0f)
+				ratios.push_back(ratio);
+		}
+	}
+
+	if(ratios.size() < 50) return 1.0f;
+
+	std::nth_element(ratios.begin(), ratios.begin() + ratios.size() / 2, ratios.end());
+	return ratios[ratios.size() / 2];
+}
 
 void CoarseTracker::setTrackingRef(
 		FrameHessian* frameHessian)

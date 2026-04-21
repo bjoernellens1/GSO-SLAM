@@ -147,7 +147,12 @@ public:
 	virtual ~FullSystem();
 
 	// adds a new frame, and creates point & residual structs.
-	void addActiveFrame(ImageAndExposure* image, MinimalImageB3* gt_img, int id, int mode);
+	void addActiveFrame(
+		ImageAndExposure* image,
+		MinimalImageB3* gt_img,
+		MinimalImage<unsigned short>* gt_depth,
+		int id,
+		int mode);
 
 	SE3 localizeFrame( ImageAndExposure* image, FrameHessian* refFrame, const std::shared_ptr<pcl::PointCloud<PointXYZIndexBW>>& ref_cloud );
 
@@ -242,6 +247,7 @@ private:
 
 	// mainPipelineFunctions
 	Vec4 trackNewCoarse(FrameHessian* fh);
+	void applyRGBDScaleCorrection(FrameHessian* fh);
 	void optimizeRefPose(FrameHessian* fh, const std::shared_ptr<pcl::PointCloud<PointXYZIndexBW>>& ref_cloud);
 	void traceNewCoarse(FrameHessian* fh);
 	void activatePoints();
@@ -322,6 +328,9 @@ private:
 	// std::vector<FrameShell*> allFrameHistory;
 	CoarseInitializer* coarseInitializer;
 	Vec5 lastCoarseRMSE;
+
+	float rgbdSmoothedScaleRatio;
+	int rgbdScaleCorrectionCount;
 
 
 	// ================== changed by mapper-thread. protected by mapMutex ===============

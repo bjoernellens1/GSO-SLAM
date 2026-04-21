@@ -120,14 +120,17 @@ public:
         }
     }
 
-    inline void undistortImage(cv::InputArray src, cv::OutputArray dst)
+    inline void undistortImage(
+        cv::InputArray src,
+        cv::OutputArray dst,
+        int interpolation = cv::InterpolationFlags::INTER_LINEAR)
     {
         cv::remap(
             src,
             dst,
             undistort_map1,
             undistort_map2,
-            cv::InterpolationFlags::INTER_LINEAR
+            interpolation
         );
     }
 

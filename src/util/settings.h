@@ -144,6 +144,10 @@ extern float setting_frameEnergyTHFacMedian;
 extern float setting_overallEnergyTHWeight;
 extern float setting_coarseCutoffTH;
 
+extern float setting_rgbdTrackingWeight;
+extern float setting_rgbdDepthScale;
+extern int setting_rgbdTrackingMode;
+
 extern float setting_minGradHistCut;
 extern float setting_minGradHistAdd;
 extern float setting_gradDownweightPerLevel;

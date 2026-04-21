@@ -12,6 +12,8 @@ SLAM.distortion_k2: -0.9531
 SLAM.distortion_p1: -0.0054
 SLAM.distortion_p2: 0.0026
 SLAM.distortion_k3: 1.1633
+SLAM.depth_scale: 5000
+SLAM.sensor_type: rgbd
 Mapper.fx: 517.3
 Mapper.fy: 516.5
 Mapper.cx: 318.6
