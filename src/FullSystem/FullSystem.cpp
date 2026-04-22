@@ -1235,20 +1235,26 @@ void FullSystem::makeKeyFrame( FrameHessian* fh)
 			if(ph->u < 0 || ph->u >= ww || ph->v < 0 || ph->v >= hh)
 				continue;
 
+			if(ph->idepth_hessian < setting_minIdepthConfidence)
+				continue;
+
 			unsigned short rawVal = rawDepth->at((int)ph->u, (int)ph->v);
 			if(rawVal == 0) continue;
 
 			float metricDepth = static_cast<float>(rawVal) / depthScale;
-			if(metricDepth < 0.1f || metricDepth > 50.0f) continue;
+			if(metricDepth < setting_slamMinDepth || metricDepth > setting_slamMaxDepth) continue;
 
 			float rgbd_idepth = 1.0f / metricDepth;
 			float dso_idepth = ph->idepth;
 			if(dso_idepth <= 0.01f || dso_idepth > 10.0f) continue;
 
 			float ratio = dso_idepth / rgbd_idepth;
-			if(ratio < 0.2f || ratio > 5.0f) continue;
+			if(ratio < setting_rgbdRatioMin || ratio > setting_rgbdRatioMax) continue;
 
-			float lambda = 0.3f;
+			float confidence = std::min(1.0f, ph->idepth_hessian / 500.0f);
+			float lambda = 0.1f + 0.4f * confidence;
+			lambda = std::clamp(lambda, 0.1f, 0.5f);
+
 			float fused_idepth = (1.0f - lambda) * dso_idepth + lambda * rgbd_idepth;
 			ph->setIdepth(fused_idepth);
 			ph->hasDepthPrior = true;

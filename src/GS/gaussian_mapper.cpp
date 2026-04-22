@@ -461,10 +461,13 @@ cv::Mat prepareAlignedRgbdDepthImage(
         fallback_size,
         frame_id);
 
+    cv::Mat depth_filtered;
+    cv::medianBlur(depth_float, depth_filtered, 5);
+
     int num_supporting_samples = 0;
     const float scale = estimateDepthAlignmentScale(
         sparse_depth,
-        depth_float,
+        depth_filtered,
         min_depth,
         max_depth,
         &num_supporting_samples);
@@ -475,7 +478,7 @@ cv::Mat prepareAlignedRgbdDepthImage(
         *alignment_scale = scale;
     }
     if (apply_alignment_scale && scale != 1.0f) {
-        depth_float *= scale;
+        depth_filtered *= scale;
     }
     if (apply_alignment_scale &&
         num_supporting_samples >= 32 &&
@@ -485,7 +488,7 @@ cv::Mat prepareAlignedRgbdDepthImage(
                   << " using " << num_supporting_samples
                   << " sparse depth samples." << std::endl;
     }
-    return depth_float;
+    return depth_filtered;
 }
 
 Sophus::SE3d pullBackPoseAlongViewingDirection(const Sophus::SE3f& Tcw, double pullback_m)
@@ -1006,6 +1009,19 @@ void GaussianMapper::readConfigFromFile(std::filesystem::path cfg_path)
     }
 
     depth_scale = getOptionalValue<float>(settings_file, "SLAM.depth_scale", 1000.0f);
+
+    const auto depth_mode_it = settings_file.find("Mapper.depth_usage_mode");
+    if (depth_mode_it != settings_file.end()) {
+        int mode_val = parseScalar<int>(depth_mode_it->second);
+        depth_usage_mode_ = static_cast<DepthUsageMode>(std::clamp(mode_val, 0, 2));
+        std::cout << "[Gaussian Mapper]Depth usage mode: " << mode_val << std::endl;
+    }
+
+    slam_min_depth_ = getOptionalValue<float>(settings_file, "SLAM.min_depth", 0.2f);
+    slam_max_depth_ = getOptionalValue<float>(settings_file, "SLAM.max_depth", 15.0f);
+    min_depth_confidence_ = getOptionalValue<float>(settings_file, "SLAM.min_depth_confidence", 200.0f);
+
+    std::cout << "[Gaussian Mapper]Depth range: [" << slam_min_depth_ << "m, " << slam_max_depth_ << "m]" << std::endl;
 }
 
 void GaussianMapper::run()
@@ -1470,14 +1486,22 @@ void GaussianMapper::trainForOneIteration()
 
     if (training_level == num_gaus_pyramid_sub_levels_) {
         torch::Tensor masked_depth = surf_depth * mask;
-        // auto depth_L1 = loss_utils::l1_loss(masked_depth, gt_depth);
-        // loss += 0.5 * depth_L1;
 
         auto sparse_depth_nonzero_mask = (sparse_depth != 0).to(masked_depth.dtype());
         auto valid_masked_depth = masked_depth * sparse_depth_nonzero_mask;
         auto valid_sparse_depth = sparse_depth * sparse_depth_nonzero_mask;
         auto depth_L1 = torch::abs(valid_masked_depth - valid_sparse_depth).sum() / sparse_depth_nonzero_mask.sum();
-        loss += lambda_sparse_depth * depth_L1;
+
+        switch (depth_usage_mode_) {
+            case RGB_ONLY:
+                break;
+            case RGB_DEPTH_FUSED:
+                loss += lambda_sparse_depth * depth_L1;
+                break;
+            case DEPTH_REGULARIZED:
+                loss += (lambda_sparse_depth * 0.1f) * depth_L1;
+                break;
+        }
     }
 
     loss.backward();
@@ -1507,13 +1531,16 @@ void GaussianMapper::trainForOneIteration()
 
             if ((getIteration() > opt_params_.densify_from_iter_) &&
                 (getIteration() % densifyInterval()== 0)) {
-                int size_threshold = (getIteration() > prune_big_point_after_iter_) ? 2000000 : 0;   // 20
+                int size_threshold = (getIteration() > prune_big_point_after_iter_) ? 2000000 : 0;
                 gaussians_->densifyAndPrune(
                     densifyGradThreshold(),
-                    densify_min_opacity_,//0.005,//
+                    densify_min_opacity_,
                     scene_->cameras_extent_,
                     size_threshold
                 );
+
+                auto max_scale = (max_gaussian_scale_fraction_ * scene_->cameras_extent_);
+                gaussians_->pruneByMaxScale(max_scale);
             }
 
             if (opacityResetInterval()

@@ -170,6 +170,8 @@ public:
         float max_anisotropy_ratio,
         float max_scale_fraction);
 
+    void pruneByMaxScale(float max_scale);
+
 // void increasePointsIterationsOfExistence(const int i = 1);
 
     void loadPly(std::filesystem::path ply_path);

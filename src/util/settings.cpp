@@ -142,6 +142,13 @@ float setting_rgbdTrackingWeight = 0.0f;   // weight for depth residuals relativ
 float setting_rgbdDepthScale = 1000.0f;     // depth scale factor (e.g., 1000 for mm->m, 5000 for TUM)
 int setting_rgbdTrackingMode = 0;           // 0 = mono, 1 = rgbd
 
+// Depth filtering parameters for real-world scenes
+float setting_slamMinDepth = 0.2f;          // minimum valid depth in meters
+float setting_slamMaxDepth = 15.0f;         // maximum valid depth in meters (reduced from 50m)
+float setting_minIdepthConfidence = 200.0f; // minimum idepth_hessian for point to be trusted
+float setting_rgbdRatioMin = 0.5f;          // minimum DSO/RGBD depth ratio (tightened from 0.2)
+float setting_rgbdRatioMax = 2.0f;          // maximum DSO/RGBD depth ratio (tightened from 5.0)
+
 
 
 
