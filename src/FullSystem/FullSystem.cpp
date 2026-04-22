@@ -180,6 +180,8 @@ FullSystem::FullSystem()
 
 	rgbdSmoothedScaleRatio = 1.0f;
 	rgbdScaleCorrectionCount = 0;
+	rgbdAlignmentScaleFromMapper_ = 1.0f;
+	rgbdAlignmentScaleFromMapperValid_ = false;
 }
 
 FullSystem::~FullSystem()
@@ -470,20 +472,27 @@ Vec4 FullSystem::trackNewCoarse(FrameHessian* fh)
 
 void FullSystem::applyRGBDScaleCorrection(FrameHessian* fh)
 {
-	// NOTE: This function applies a scale correction to fh's pose after
-	// trackNewCoarse() has already committed to an uncorrected estimate.
-	// DSO's downstream operations (tracing, BA, marginalization) use
-	// fh->shell->camToWorld, so this post-hoc correction could in principle
-	// corrupt DSO's internal bookkeeping. Additionally, the scale ratio is
-	// derived from the reference frame's (lastRef) DSO/RGBD idepth comparison,
-	// not from the current frame's own depth — a scale ratio computed from
-	// the current depth vs. the DSO pose estimate would be more direct.
-	// This approach was chosen because the DSO idepth at the reference frame
-	// is the most well-constrained, but the timing and data-choice assumptions
-	// should be validated empirically before relying on this for critical tasks.
+	// NOTE: Post-hoc scale correction is problematic because:
+	// 1. It compounds over frames when applied per-frame
+	// 2. It's applied AFTER tracking, not during optimization
+	// 3. The Gaussian Mapper's scale is now fed back via setRgbdAlignmentScaleFromMapper
+	//    and used to set depth priors on PointHessians during keyframe creation
+	//
+	// The depth prior approach (in makeKeyFrame) is the primary mechanism now.
+	// This function is kept for logging purposes.
 	if(setting_rgbdTrackingMode <= 0) return;
 
 	float medianRatio = coarseTracker->computeRGBDScaleRatio();
+
+	if(rgbdAlignmentScaleFromMapperValid_)
+	{
+		float mapperScale = rgbdAlignmentScaleFromMapper_;
+		if(mapperScale >= 0.3f && mapperScale <= 3.0f)
+		{
+			medianRatio = mapperScale;
+		}
+	}
+
 	if(medianRatio < 0.3f || medianRatio > 3.0f) return;
 
 	const float smoothingAlpha = 0.05f;
@@ -491,14 +500,8 @@ void FullSystem::applyRGBDScaleCorrection(FrameHessian* fh)
 	rgbdScaleCorrectionCount++;
 
 	if(rgbdScaleCorrectionCount <= 5 || rgbdScaleCorrectionCount % 50 == 0)
-		printf("[RGB-D Scale] frame %d: raw=%.3f smoothed=%.3f cnt=%d\n",
+		printf("[RGB-D Scale] frame %d: raw=%.3f smoothed=%.3f cnt=%d (pose correction disabled)\n",
 			   fh->shell->id, medianRatio, rgbdSmoothedScaleRatio, rgbdScaleCorrectionCount);
-
-	if(rgbdSmoothedScaleRatio < 0.3f || rgbdSmoothedScaleRatio > 3.0f) return;
-
-	SE3& pose = fh->shell->camToWorld;
-	Vec3 correctedTranslation = pose.translation() / rgbdSmoothedScaleRatio;
-	pose = SE3(pose.so3(), correctedTranslation);
 }
 
 
@@ -1200,7 +1203,7 @@ void FullSystem::makeNonKeyFrame( FrameHessian* fh)
 
 void FullSystem::makeKeyFrame( FrameHessian* fh)
 {
-	// needs to be set by mapping thread
+	// needs to be set by mapping thread. no lock required since we are in mapping thread.
 	{
 		boost::unique_lock<boost::mutex> crlock(shellPoseMutex);
 		assert(fh->shell->trackingRef != 0);
@@ -1219,6 +1222,49 @@ void FullSystem::makeKeyFrame( FrameHessian* fh)
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
 	callKFUpdateFromGS = false;
+
+	if(setting_rgbdTrackingMode > 0 && fh->kf_depth != nullptr)
+	{
+		MinimalImage<unsigned short>* rawDepth = fh->kf_depth;
+		float depthScale = setting_rgbdDepthScale;
+		int ww = rawDepth->w, hh = rawDepth->h;
+		int appliedCount = 0;
+
+		for(PointHessian* ph : fh->pointHessians)
+		{
+			if(ph->u < 0 || ph->u >= ww || ph->v < 0 || ph->v >= hh)
+				continue;
+
+			if(ph->idepth_hessian < setting_minIdepthConfidence)
+				continue;
+
+			unsigned short rawVal = rawDepth->at((int)ph->u, (int)ph->v);
+			if(rawVal == 0) continue;
+
+			float metricDepth = static_cast<float>(rawVal) / depthScale;
+			if(metricDepth < setting_slamMinDepth || metricDepth > setting_slamMaxDepth) continue;
+
+			float rgbd_idepth = 1.0f / metricDepth;
+			float dso_idepth = ph->idepth;
+			if(dso_idepth <= 0.01f || dso_idepth > 10.0f) continue;
+
+			float ratio = dso_idepth / rgbd_idepth;
+			if(ratio < setting_rgbdRatioMin || ratio > setting_rgbdRatioMax) continue;
+
+			float confidence = std::min(1.0f, ph->idepth_hessian / 500.0f);
+			float lambda = 0.1f + 0.4f * confidence;
+			lambda = std::clamp(lambda, 0.1f, 0.5f);
+
+			float fused_idepth = (1.0f - lambda) * dso_idepth + lambda * rgbd_idepth;
+			ph->setIdepth(fused_idepth);
+			ph->hasDepthPrior = true;
+			appliedCount++;
+		}
+
+		if(appliedCount > 0 && (rgbdScaleCorrectionCount <= 5 || rgbdScaleCorrectionCount % 50 == 0))
+			printf("[RGB-D Depth Prior] frame %d: applied depth prior to %d points\n",
+				   fh->shell->id, appliedCount);
+	}
 
 	boost::unique_lock<boost::mutex> lock(mapMutex);
 

@@ -1154,6 +1154,17 @@ void GaussianModel::pruneByDepthEvidence(
     }
 }
 
+void GaussianModel::pruneByMaxScale(float max_scale)
+{
+    auto scales = this->getScalingActivation();
+    auto max_scales = std::get<0>(torch::max(scales, /*dim=*/1));
+    auto prune_mask = max_scales > max_scale;
+
+    if (prune_mask.any().item<bool>()) {
+        prunePoints(prune_mask);
+    }
+}
+
 void GaussianModel::densifyAndSplit(
     torch::Tensor& grads,
     float grad_threshold,

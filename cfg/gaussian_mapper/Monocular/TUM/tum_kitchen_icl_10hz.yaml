@@ -14,6 +14,8 @@ SLAM.distortion_p1: 0.00043707378790713847
 SLAM.distortion_p2: 0.0001285719481529668
 SLAM.distortion_k3: 0.039714131504297256
 SLAM.depth_scale: 1000
+SLAM.min_depth: 0.2
+SLAM.max_depth: 15.0
 Mapper.fx: 749.8203735351562
 Mapper.fy: 749.7190551757812
 Mapper.cx: 640.7588500976562
@@ -50,7 +52,8 @@ Mapper.cull_keyframes: 0
 Mapper.large_rotation_threshold: 20.0
 Mapper.large_translation_threshold: 0.5
 Mapper.stable_num_iter_existence: 1
-Mapper.lambda_sparse_depth: 500.0
+Mapper.lambda_sparse_depth: 50.0
+Mapper.depth_usage_mode: 1
 
 GausPyramid.do: 0
 GausPyramid.num_sub_levels: 3

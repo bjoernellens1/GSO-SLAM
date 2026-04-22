@@ -19,6 +19,16 @@ bin/
 dataset/Replica/
 dataset/TUM/
 dataset/Scannet/
+dataset/Christian/
+dataset/kitchen1/
+dataset/table1/
+dataset/workshop1/
+dataset/tableware1/
+dataset/floor2/
+dataset/floor3/
+dataset/table1_slam/
+dataset/workshop1_slam/
+dataset/kitchen1_slam/
 dataset/*.zip
 dataset/*.tgz
 dataset/*.tar

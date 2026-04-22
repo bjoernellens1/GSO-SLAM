@@ -796,12 +796,12 @@ float CoarseTracker::computeRGBDScaleRatio()
 			if(rawVal == 0) continue;
 
 			float metricDepth = static_cast<float>(rawVal) / depthScale;
-			if(metricDepth < 0.1f || metricDepth > 50.0f) continue;
+			if(metricDepth < setting_slamMinDepth || metricDepth > setting_slamMaxDepth) continue;
 
 			float rgbd_idepth = 1.0f / metricDepth;
 			float ratio = dso_idepth / rgbd_idepth;
 
-			if(ratio > 0.2f && ratio < 5.0f)
+			if(ratio > setting_rgbdRatioMin && ratio < setting_rgbdRatioMax)
 				ratios.push_back(ratio);
 		}
 	}

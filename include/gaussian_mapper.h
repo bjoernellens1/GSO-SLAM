@@ -77,6 +77,13 @@ enum SystemSensorType
     RGBD = 3
 };
 
+enum DepthUsageMode
+{
+    RGB_ONLY = 0,        // No depth loss, RGB optimization only
+    RGB_DEPTH_FUSED = 1, // Depth as hard constraint (current behavior)
+    DEPTH_REGULARIZED = 2 // Depth as soft constraint with lower weight
+};
+
 struct VariableParameters
 {
     float position_lr_init;
@@ -244,6 +251,8 @@ protected:
         std::size_t frame_id);
     void pruneGeometryOutliers();
 
+    float getRgbdAlignmentScale() const;
+
     void savePly(std::filesystem::path result_dir);
     void keyframesToJson(std::filesystem::path result_dir);
     void saveModelParams(std::filesystem::path result_dir);
@@ -323,6 +332,10 @@ protected:
 
     // Settings
     SystemSensorType sensor_type_ = MONOCULAR;
+    DepthUsageMode depth_usage_mode_ = RGB_DEPTH_FUSED;
+    float slam_min_depth_ = 0.2f;
+    float slam_max_depth_ = 15.0f;
+    float min_depth_confidence_ = 200.0f;
 
     float monocular_inactive_geo_densify_max_pixel_dist_ = 20.0;
     float stereo_baseline_length_ = 0.0f;

@@ -148,6 +148,13 @@ extern float setting_rgbdTrackingWeight;
 extern float setting_rgbdDepthScale;
 extern int setting_rgbdTrackingMode;
 
+// Depth filtering and confidence settings
+extern float setting_slamMinDepth;
+extern float setting_slamMaxDepth;
+extern float setting_minIdepthConfidence;
+extern float setting_rgbdRatioMin;
+extern float setting_rgbdRatioMax;
+
 extern float setting_minGradHistCut;
 extern float setting_minGradHistAdd;
 extern float setting_gradDownweightPerLevel;

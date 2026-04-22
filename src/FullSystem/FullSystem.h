@@ -184,6 +184,11 @@ public:
 		Hcalib = newHcalib;
     }
 	
+	void setRgbdAlignmentScaleFromMapper(float scale) {
+		rgbdAlignmentScaleFromMapper_ = scale;
+		rgbdAlignmentScaleFromMapperValid_ = true;
+	}
+	
 	std::vector<FrameHessian*> allKeyframeHessians;
 
 
@@ -331,6 +336,8 @@ private:
 
 	float rgbdSmoothedScaleRatio;
 	int rgbdScaleCorrectionCount;
+	float rgbdAlignmentScaleFromMapper_;
+	bool rgbdAlignmentScaleFromMapperValid_;
 
 
 	// ================== changed by mapper-thread. protected by mapMutex ===============
